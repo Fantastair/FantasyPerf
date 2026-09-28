@@ -45,14 +45,14 @@ def eligible(sha):
     runs = [r for r in runs["workflow_runs"] if
             r["head_sha"] == sha and r["event"] == "push" and
             r["head_branch"] in ("main", "refs/heads/main") and
-            r["path"].split("@", 1)[0] == ".gitea/workflows/ci.yml"]
+            r["path"].split("@", 1)[0] in ("ci.yml", ".gitea/workflows/ci.yml")]
     if not runs:
         return False
     run = max(runs, key=lambda r: r["id"])
-    if run.get("conclusion") != "success":
+    if (run.get("conclusion") or run.get("status")) != "success":
         return False
     jobs = get(f"actions/runs/{run['id']}/jobs")["jobs"]
-    return any(j["name"] == "verify" and j.get("conclusion") == "success"
+    return any(j["name"] == "verify" and (j.get("conclusion") or j.get("status")) == "success"
                and j["head_sha"] == sha for j in jobs)
 
 
