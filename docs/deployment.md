@@ -1,6 +1,6 @@
 # Gitea 部署方案
 
-日常开发以 Gitea 为主仓库。向 `main` 提交 PR 后执行单元测试、Chromium / WebKit 测试及构建；指定审查者批准后才可合并。合并后验证对应提交，再部署静态产物 `dist/`。GitHub 同步暂不配置。
+日常开发以 Gitea 为主仓库。向 `main` 提交 PR 后执行单元测试、Chromium / WebKit 测试及构建；指定审查者批准后才可合并。合并后验证对应提交，再部署静态产物 `dist/` 并单向同步 GitHub。
 
 ## 当前状态
 
@@ -25,7 +25,7 @@ PR 作者不能批准自己的 PR。目前只有一名维护者，自己的 PR �
 
 网站仅提供静态文件，不运行项目开发服务器，不公开源码仓库或 `.git` 目录。项目文件和参考图仍由用户保存在浏览器或导出的 JSON 中。
 
-部署权限不进入 PR 测试任务。GitHub 写入凭据以后配置，也只允许发布流程使用。
+部署权限和 GitHub 写入凭据不进入 PR 测试任务。
 
 ## 服务器运维
 
@@ -42,3 +42,18 @@ ssh 1003 'sudo systemctl start fantasyperf-deploy'
 ```
 
 `deploy/` 下的服务和配置是安装源文件，不会随普通网页部署覆盖服务器配置。运维修改需单独安装并验证。回滚时先停止定时器，再将 `current` 原子切换到已验证的旧版本；否则定时器会重新部署最新 `main`。恢复自动部署前应通过 PR 修复或回退代码。
+
+## GitHub 同步
+
+目标为 `https://github.com/Fantastair/FantasyPerf`。首次设置需创建空的公开仓库，在该仓库的 Settings → Deploy keys 中添加服务器生成的公钥，并启用 Allow write access。私钥仅保存在服务器 `/var/lib/fantasyperf-sync/github_key`，不进入 Git。
+
+`fantasyperf-github-sync.timer` 每分钟检查 `main` 对应的 push CI。只有全部检查成功，才推送该提交及其历史到 GitHub 的 `main`。不会同步开发分支或标签，不使用强制推送；GitHub 出现独立提交时任务会失败并保留两端数据，由维护者处理历史差异。
+
+同步与网站部署独立执行、分别重试。同步失败不会影响网站，日志可通过以下命令查看：
+
+```sh
+ssh 1003 'sudo journalctl -u fantasyperf-github-sync -n 30 --no-pager'
+ssh 1003 'sudo systemctl start fantasyperf-github-sync'
+```
+
+GitHub 连接使用标准 SSH 22 端口，严格校验 GitHub 官方主机密钥。最后一次成功推送记录保存在 `/var/lib/fantasyperf-sync/status.json`。只有完成 GitHub 公钥授权后才能成功同步；安装服务文件不代表授权已完成。
