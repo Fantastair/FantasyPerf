@@ -1,8 +1,10 @@
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-const root = process.cwd();
-const port = Number(process.env.PORT || 5173);
+const lan = process.argv.includes("--lan");
+const root = path.resolve(process.cwd(), lan ? "dist" : ".");
+const port = Number(process.env.PORT || (lan ? 5174 : 5173));
+const host = lan ? "0.0.0.0" : "127.0.0.1";
 const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -21,7 +23,13 @@ http
             url.pathname === "/" ? "/index.html" : url.pathname,
           ),
       );
-      if (!file.startsWith(root + path.sep)) {
+      if (
+        !file.startsWith(root + path.sep) ||
+        path
+          .relative(root, file)
+          .split(path.sep)
+          .some((part) => part.startsWith("."))
+      ) {
         res.writeHead(403);
         res.end();
         return;
@@ -37,6 +45,6 @@ http
       res.end("Not found");
     }
   })
-  .listen(port, "127.0.0.1", () =>
+  .listen(port, host, () =>
     console.log(`FantasyPerf: http://localhost:${port}`),
   );

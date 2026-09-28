@@ -1,3 +1,5 @@
+import { COMPONENT_LIBRARY, instantiateLibraryItem } from "./library.js";
+import { installViewerGestures } from "./viewer.js";
 import { createReferenceLayer } from "./reference.js";
 import {
   PITCH,
@@ -62,6 +64,13 @@ let project = newProject(),
   panel = "properties",
   lastSave = "",
   storageBlocked = false;
+const viewerQuery = new URLSearchParams(location.search).get("view") === "1";
+const mobileMedia = matchMedia(
+  "(max-width: 999px), (hover: none) and (pointer: coarse)",
+);
+let readOnly = viewerQuery || mobileMedia.matches;
+let desktopSession = null;
+document.documentElement.dataset.readonly = String(readOnly);
 let templates = [];
 try {
   const raw = localStorage.getItem(STORE);
@@ -134,6 +143,7 @@ function save() {
   savedTimer = setTimeout(flushSave, 300);
 }
 function flushSave() {
+  if (readOnly) return;
   clearTimeout(savedTimer);
   if (gesture?.before) {
     savedTimer = setTimeout(flushSave, 300);
@@ -158,6 +168,7 @@ function changed(options) {
   refresh(options);
 }
 function commit(fn, options) {
+  if (readOnly) return;
   const before = clone(project);
   fn();
   if (JSON.stringify(before) !== JSON.stringify(project)) {
@@ -182,6 +193,7 @@ function cancel() {
   refresh();
 }
 function setTool(tool) {
+  if (readOnly) return;
   state.referenceSelected = false;
   if (state.draft || state.placement) cancel();
   state.tool = tool;
@@ -200,13 +212,19 @@ function setView(view) {
   refresh();
 }
 function fit() {
-  const w = canvas.clientWidth / (state.view === "split" ? 2 : 1),
-    h = canvas.clientHeight;
+  const v = viewsFor(
+    canvas.clientWidth,
+    canvas.clientHeight,
+    state.view,
+    readOnly,
+  )[0];
+  const w = v.w,
+    h = v.h;
   state.camera = {
     zoom: clamp(
       Math.min(
-        (w - 100) / ((project.board.cols + 1) * CELL),
-        (h - 160) / ((project.board.rows + 1) * CELL),
+        (w - (readOnly ? 56 : 100)) / ((project.board.cols + 1) * CELL),
+        (h - (readOnly ? 100 : 160)) / ((project.board.rows + 1) * CELL),
       ),
       0.15,
       3,
@@ -223,18 +241,23 @@ function zoom(factor, anchor) {
   const v = viewAt(
     anchor ?? { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 },
   );
-  anchor ??= { x: v.x + v.w / 2, y: v.h / 2 };
+  anchor ??= { x: v.x + v.w / 2, y: v.y + v.h / 2 };
   state.camera.panX =
     ((state.camera.panX - (anchor.x - v.x - v.w / 2)) * next) / old +
     (anchor.x - v.x - v.w / 2);
   state.camera.panY =
-    ((state.camera.panY - (anchor.y - v.h / 2)) * next) / old +
-    (anchor.y - v.h / 2);
+    ((state.camera.panY - (anchor.y - v.y - v.h / 2)) * next) / old +
+    (anchor.y - v.y - v.h / 2);
   state.camera.zoom = next;
   $("#zoom-label").textContent = Math.round(next * 100) + "%";
   requestDraw();
 }
 function refresh({ preserveInspector = false } = {}) {
+  state.readOnly = readOnly;
+  $("#project-name").readOnly = readOnly;
+  if (readOnly) $("#save-status").textContent = "只读查看";
+  $("#viewer-welcome").hidden = !readOnly || project.objects.length > 0;
+  $('[data-action="viewer-reference"]').disabled = !project.reference;
   if (!project.reference) state.referenceSelected = false;
   $("#project-name").value = project.name;
   $("#summary").textContent =
@@ -270,6 +293,7 @@ function refresh({ preserveInspector = false } = {}) {
     updateHint();
   });
   $("#empty-tip").hidden =
+    readOnly ||
     project.objects.length > 0 ||
     !!project.reference ||
     state.tool !== "select";
@@ -289,6 +313,10 @@ function refresh({ preserveInspector = false } = {}) {
   requestDraw();
 }
 function updateHint() {
+  if (readOnly) {
+    $("#status-hint").textContent = "只读 · 单指拖动 · 双指缩放 · 点击查看详情";
+    return;
+  }
   const hints = {
     select: "点击选择 · Shift 多选 · 拖动框选 · 空格拖动平移",
     component:
@@ -330,6 +358,10 @@ function bindNumber(id, fn) {
   });
 }
 function renderInspector() {
+  if (readOnly) {
+    renderViewerInspector();
+    return;
+  }
   const root = $("#inspector-content"),
     selected = selectedObjects();
   $$("[data-panel]").forEach((b) =>
@@ -543,6 +575,110 @@ function editComponent(o) {
   if (o.mounting === "smd") smdDialog(o);
   else componentDialog(o);
 }
+function libraryDialog() {
+  if (readOnly) return;
+  dialog(
+    "公共元件库",
+    `<p class="muted">通用引脚组，放置后可独立修改。请按实物核对引脚顺序。</p><div class="field"><label for="library-search">搜索元件</label><input id="library-search" type="search" placeholder="排针、双排、贴片…"></div><div class="field"><label for="library-category">分类</label><select id="library-category"><option value="">全部</option><option>排针</option><option>双排引脚组</option><option>贴片</option></select></div><div id="library-results" class="library-results"></div>`,
+    '<button data-close>关闭</button><button id="library-custom">自定义元件</button><button id="library-personal">个人模板</button>',
+  );
+  const render = () => {
+    const query = $("#library-search").value.trim().toLowerCase(),
+      category = $("#library-category").value;
+    const items = COMPONENT_LIBRARY.filter(
+      (item) =>
+        (!category || item.category === category) &&
+        `${item.title} ${item.description}`.toLowerCase().includes(query),
+    );
+    $("#library-results").innerHTML = items.length
+      ? items
+          .map(
+            (item) =>
+              `<button class="library-item" data-library="${item.id}"><strong>${esc(item.title)}</strong><small>${esc(item.description)}</small><span>放置 →</span></button>`,
+          )
+          .join("")
+      : '<p class="empty-list">没有匹配项，可创建自定义元件。</p>';
+    $$("[data-library]").forEach(
+      (button) =>
+        (button.onclick = () => {
+          const item = COMPONENT_LIBRARY.find(
+            (item) => item.id === button.dataset.library,
+          );
+          const o = instantiateLibraryItem(item, nameNext(item.prefix));
+          if (!fits([o], project.board)) {
+            toast("当前板尺寸放不下该元件，请先增大板尺寸。");
+            return;
+          }
+          closeDialog();
+          state.referenceSelected = false;
+          state.selected.clear();
+          state.tool = "component";
+          state.placement = o;
+          if (state.view !== "split") state.view = objectFace(o);
+          refresh();
+        }),
+    );
+  };
+  $("#library-search").oninput = render;
+  $("#library-category").onchange = render;
+  $("#library-custom").onclick = () => componentDialog();
+  $("#library-personal").onclick = templatesDialog;
+  render();
+}
+function renderViewerInspector() {
+  const root = $("#inspector-content"),
+    o = selectedObjects()[0];
+  $$("[data-panel]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.panel === panel),
+  );
+  if (panel === "wires") {
+    const wires = project.objects.filter((o) => o.type === "wire");
+    root.innerHTML = `<h2 class="section-heading">跳线清单</h2>${wires.length ? wires.map((w) => `<button class="wire-row" data-viewer-wire="${esc(w.id)}"><span class="wire-swatch" style="background:${w.color}"></span><span><strong>${esc(w.name)}</strong><small>${holeName(w.points[0])} → ${holeName(w.points.at(-1))}</small></span><span class="wire-length">${cutLength(w).toFixed(1)} mm</span></button>`).join("") : '<p class="muted">此项目没有跳线。</p>'}`;
+    $$("[data-viewer-wire]").forEach(
+      (b) =>
+        (b.onclick = () => {
+          state.selected = new Set([b.dataset.viewerWire]);
+          state.view = "back";
+          panel = "properties";
+          fit();
+          refresh();
+        }),
+    );
+    return;
+  }
+  if (!o) {
+    root.innerHTML = `<h2 class="section-heading">${esc(project.name)}</h2><p class="muted">${project.board.cols} × ${project.board.rows} 孔 · 孔距 2.54 mm</p><p class="muted">单指拖动、双指缩放。点击元件或线路查看详情。</p><label class="check"><input id="viewer-ghost" type="checkbox" ${state.showGhost ? "checked" : ""}>显示另一面参考</label><label class="check"><input id="viewer-labels" type="checkbox" ${state.showLabels ? "checked" : ""}>显示引脚标注</label>`;
+    $("#viewer-ghost").onchange = (e) => {
+      state.showGhost = e.target.checked;
+      requestDraw();
+    };
+    $("#viewer-labels").onchange = (e) => {
+      state.showLabels = e.target.checked;
+      requestDraw();
+    };
+    return;
+  }
+  root.innerHTML = `<h2 class="section-heading">${esc(o.name)}</h2><p class="muted">${objectFace(o) === "front" ? "焊盘面" : "元件面"} · 只读</p>`;
+  if (o.type === "component")
+    root.insertAdjacentHTML(
+      "beforeend",
+      `${o.mounting === "smd" ? '<p class="muted">0603 / 0805 贴片示意</p>' : ""}<div class="viewer-pin-list">${o.pins.map((p) => `<div class="data-row"><span>${holeName(pinPosition(o, p))}</span><strong>${esc(p.label)}</strong></div>`).join("")}</div>`,
+    );
+  else
+    root.insertAdjacentHTML(
+      "beforeend",
+      `<div class="data-row"><span>起点 → 终点</span><strong>${holeName(o.points[0])} → ${holeName(o.points.at(-1))}</strong></div><div class="data-row"><span>路径长度</span><strong>${lengthMM(o.points).toFixed(1)} mm</strong></div>${o.type === "wire" ? `<div class="data-row"><span>起点 / 终点余量</span><strong>${o.allowanceStart} / ${o.allowanceEnd} mm</strong></div><div class="metric"><label>建议裁线长度</label><strong>${cutLength(o).toFixed(1)}</strong><small>mm</small></div>` : ""}`,
+    );
+}
+function viewerReference() {
+  if (!project.reference) return;
+  dialog(
+    "原理图参考",
+    '<div class="viewer-reference"><img alt="原理图参考"></div>',
+    "<button data-close>关闭</button>",
+  );
+  $(".viewer-reference img").src = project.reference.dataUrl;
+}
 function componentDialog(existing = null, template = null) {
   let pins = clone(
     existing?.pins ?? template?.pins ?? regularPins("double", 8, 1, 3),
@@ -551,7 +687,7 @@ function componentDialog(existing = null, template = null) {
   dialog(
     existing ? "编辑元件" : "放置元件",
     `${field("component-name", "元件名称", existing?.name ?? template?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排间距（孔）", 1, 1, 20)}${numberField("pin-gap", "两排间距（孔）", 3, 1, 30)}</div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
-    `<button id="browse-templates">本地模板</button><button data-close>取消</button><button id="place-component" class="primary">${existing ? "保存修改" : "放到板上"}</button>`,
+    `<button id="browse-library">公共元件库</button><button id="browse-templates">本地模板</button><button data-close>取消</button><button id="place-component" class="primary">${existing ? "保存修改" : "放到板上"}</button>`,
   );
   const update = () => {
     $("#pin-labels").value = pins.map((p) => p.label).join("\n");
@@ -629,6 +765,7 @@ function componentDialog(existing = null, template = null) {
     (s) => ($(s).onchange = generate),
   );
   update();
+  $("#browse-library").onclick = libraryDialog;
   $("#browse-templates").onclick = () => templatesDialog();
   $("#place-component").onclick = () => {
     syncLabels();
@@ -889,6 +1026,26 @@ function undo(redo = false) {
   } else refresh();
 }
 const actions = {
+  library: libraryDialog,
+  "viewer-demo": () => {
+    project = demoProject();
+    state.selected.clear();
+    fit();
+    refresh();
+  },
+  "viewer-details": () => {
+    panel = "properties";
+    renderInspector();
+    document.body.classList.add("viewer-details-open");
+  },
+  "viewer-wires": () => {
+    panel = "wires";
+    renderInspector();
+    document.body.classList.add("viewer-details-open");
+  },
+  "viewer-close": () => document.body.classList.remove("viewer-details-open"),
+  "viewer-reference": viewerReference,
+
   smd: () => smdDialog(),
   reference: () => {
     if (project.reference) {
@@ -932,6 +1089,24 @@ const actions = {
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b || b.disabled) return;
+  if (readOnly && b.dataset.tool) return;
+  if (
+    readOnly &&
+    b.dataset.action &&
+    ![
+      "open",
+      "help",
+      "fit",
+      "zoom-in",
+      "zoom-out",
+      "viewer-demo",
+      "viewer-details",
+      "viewer-wires",
+      "viewer-close",
+      "viewer-reference",
+    ].includes(b.dataset.action)
+  )
+    return;
   if (b.hasAttribute("data-close")) {
     closeDialog();
     if (state.tool === "component" && !state.placement) state.tool = "select";
@@ -956,6 +1131,16 @@ $("#file-input").onchange = async (e) => {
   }
   try {
     const imported = validateProject(JSON.parse(await f.text()));
+    if (readOnly) {
+      project = imported;
+      state.selected.clear();
+      state.tool = "select";
+      document.body.classList.remove("viewer-details-open");
+      fit();
+      refresh();
+      toast("已打开，只读查看，不会覆盖编辑存档。");
+      return;
+    }
     dialog(
       "打开项目",
       `<p>将打开「${esc(imported.name)}」</p><p class="muted">${imported.board.cols} × ${imported.board.rows} 孔，${imported.objects.length} 个对象。当前设计可通过撤销恢复。</p>`,
@@ -977,9 +1162,15 @@ $("#file-input").onchange = async (e) => {
 };
 function viewAt(p) {
   return (
-    viewsFor(canvas.clientWidth, canvas.clientHeight, state.view).find(
-      (v) => p.x >= v.x && p.x < v.x + v.w,
-    ) ?? viewsFor(canvas.clientWidth, canvas.clientHeight, state.view)[0]
+    viewsFor(
+      canvas.clientWidth,
+      canvas.clientHeight,
+      state.view,
+      readOnly,
+    ).find(
+      (v) => p.x >= v.x && p.x < v.x + v.w && p.y >= v.y && p.y < v.y + v.h,
+    ) ??
+    viewsFor(canvas.clientWidth, canvas.clientHeight, state.view, readOnly)[0]
   );
 }
 function eventPoint(e) {
@@ -1065,6 +1256,7 @@ function finishDraft() {
   refresh();
 }
 canvas.addEventListener("pointerdown", (e) => {
+  if (readOnly) return;
   if (e.button !== 0 && e.button !== 1) return;
   state.referenceSelected = false;
   canvas.focus();
@@ -1226,6 +1418,7 @@ canvas.addEventListener("pointerdown", (e) => {
   }
 });
 canvas.addEventListener("pointermove", (e) => {
+  if (readOnly) return;
   const p = eventPoint(e),
     v = gesture?.view ?? viewAt(p),
     g = fromScreen(p, project.board, v, state.camera);
@@ -1366,6 +1559,7 @@ canvas.addEventListener("pointerleave", () => {
   }
 });
 canvas.addEventListener("dblclick", (e) => {
+  if (readOnly) return;
   if (state.draft) {
     finishDraft();
     return;
@@ -1388,6 +1582,25 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 document.addEventListener("keydown", (e) => {
   const editable = e.target.closest("input,textarea,select,[contenteditable]");
   if (modal.open || editable) return;
+  if (readOnly) {
+    if (e.key === "Escape")
+      document.body.classList.remove("viewer-details-open");
+    if (e.key.toLowerCase() === "f") fit();
+    if (
+      [
+        "Delete",
+        "Backspace",
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowUp",
+        "ArrowDown",
+      ].includes(e.key) ||
+      e.ctrlKey ||
+      e.metaKey
+    )
+      e.preventDefault();
+    return;
+  }
   const cmd = e.metaKey || e.ctrlKey,
     k = e.key.toLowerCase();
   if (cmd && ["z", "y", "c", "v", "s"].includes(k)) {
@@ -1487,7 +1700,51 @@ window.addEventListener("fantasyperf-theme-change", requestDraw);
 window.addEventListener("fantasyperf-theme-storage-error", () =>
   toast("外观已切换，但浏览器无法保存外观偏好。"),
 );
-new ResizeObserver(() => requestDraw()).observe(canvas);
+const resetViewerGestures = installViewerGestures(canvas, {
+  enabled: () => readOnly,
+  point: eventPoint,
+  zoom,
+  pan: (dx, dy) => {
+    state.camera.panX += dx;
+    state.camera.panY += dy;
+  },
+  changed: requestDraw,
+  pick: (p) => {
+    const hit = hitObjects(p, viewAt(p))[0];
+    state.selected = new Set(hit ? [hit.id] : []);
+    panel = "properties";
+    refresh();
+    document.body.classList.toggle("viewer-details-open", !!hit);
+  },
+});
+mobileMedia.addEventListener("change", () => {
+  const next = viewerQuery || mobileMedia.matches;
+  if (next === readOnly) return;
+  if (next) {
+    cancel();
+    closeDialog();
+    flushSave();
+    desktopSession = { project, history };
+  } else if (desktopSession) {
+    project = desktopSession.project;
+    history = desktopSession.history;
+    desktopSession = null;
+  }
+  readOnly = next;
+  document.documentElement.dataset.readonly = String(readOnly);
+  state.selected.clear();
+  state.tool = "select";
+  state.draft = null;
+  state.placement = null;
+  resetViewerGestures();
+  document.body.classList.remove("viewer-details-open");
+  refresh();
+  requestAnimationFrame(fit);
+});
+new ResizeObserver(() => {
+  requestDraw();
+  if (readOnly) fit();
+}).observe(canvas);
 if (lastSave) $("#save-status").textContent = "已自动保存到本机";
 refresh();
 requestAnimationFrame(fit);

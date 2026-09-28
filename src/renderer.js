@@ -55,7 +55,13 @@ const DARK_COLORS = {
   "#078b7d": "#6ae1c1",
 };
 export const CELL = 28;
-export function viewsFor(width, height, view) {
+export function viewsFor(width, height, view, stacked = false) {
+  if (stacked) height = Math.max(100, height - 96);
+  if (view === "split" && stacked)
+    return [
+      { face: "back", x: 0, y: 0, w: width, h: height / 2 },
+      { face: "front", x: 0, y: height / 2, w: width, h: height / 2 },
+    ];
   return view === "split"
     ? [
         { face: "back", x: 0, y: 0, w: width / 2, h: height },
@@ -169,7 +175,7 @@ export function drawScene(
   ctx.fillStyle = ink("#f3f6f7");
   ctx.fillRect(0, 0, width, height);
   const board = project.board,
-    views = viewsFor(width, height, state.view),
+    views = viewsFor(width, height, state.view, !exporting && state.readOnly),
     camera = state.camera;
   for (const v of views) {
     ctx.save();
@@ -240,14 +246,25 @@ export function drawScene(
     ctx.lineTo(a1.x + 6, by + 2);
     ctx.lineTo(a1.x, by + 8);
     ctx.fill();
-    text(
-      ctx,
-      `${v.face === "back" ? "背面 · 元件面" : "正面 · 焊盘面"}  /  A1 ${v.face === "back" ? "左上" : "右上"}`,
-      v.x + v.w / 2,
-      exporting ? 50 : Math.max(73, by - 42),
-      ink("#82969b"),
-      11,
-    );
+    if (state.readOnly && !exporting)
+      text(
+        ctx,
+        v.face === "back" ? "元件面 · A1 左上" : "焊盘面 · A1 右上",
+        v.x + v.w - 12,
+        v.y + 20,
+        ink("#82969b"),
+        11,
+        "right",
+      );
+    else
+      text(
+        ctx,
+        `${v.face === "back" ? "背面 · 元件面" : "正面 · 焊盘面"}  /  A1 ${v.face === "back" ? "左上" : "右上"}`,
+        v.x + v.w / 2,
+        exporting ? 50 : Math.max(v.y + (state.readOnly ? 40 : 73), by - 42),
+        ink("#82969b"),
+        11,
+      );
     const active = (o) =>
       exporting ? objectFace(o) === v.face : editableOnFace(o, v.face, state);
     const renderObject = (o, ghost = false, preview = false) => {
@@ -442,7 +459,7 @@ export function drawScene(
               selected ? ink("#259b8e") : ink("#a3b0ae"),
             );
         }
-        if (selected) {
+        if (selected && !state.readOnly) {
           ps.forEach((p) => {
             ctx.fillStyle = ink("white");
             ctx.strokeStyle = ink("#087e72");
@@ -512,8 +529,12 @@ export function drawScene(
     line(
       ctx,
       [
-        { x: width / 2, y: 0 },
-        { x: width / 2, y: height },
+        !exporting && state.readOnly
+          ? { x: 0, y: views[1].y }
+          : { x: width / 2, y: 0 },
+        !exporting && state.readOnly
+          ? { x: width, y: views[1].y }
+          : { x: width / 2, y: height },
       ],
       ink("#d9e2e4"),
       1,

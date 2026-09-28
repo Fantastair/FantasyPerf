@@ -268,3 +268,63 @@ test("贴片元件跨接相邻焊盘，旋转及文件往返保留面和类型",
   c.pins[1].x = 2;
   assert.throws(() => validateProject(p), /相邻焊盘/);
 });
+
+test("公共元件库放置实例相互独立，所有定义可保存", async () => {
+  const { COMPONENT_LIBRARY, instantiateLibraryItem } =
+    await import("../src/library.js");
+  for (const item of COMPONENT_LIBRARY) {
+    const p = newProject(100, 100),
+      a = instantiateLibraryItem(item, "A"),
+      b = instantiateLibraryItem(item, "B");
+    p.objects.push(a, b);
+    assert.notEqual(a.id, b.id);
+    assert.deepEqual(validateProject(p), p);
+    a.pins[0].label = "changed";
+    assert.notEqual(b.pins[0].label, "changed");
+    assert.notEqual(item.pins[0].label, "changed");
+  }
+});
+
+test("只读触摸控制器支持双指缩放且拖动不会触发选中", async () => {
+  const { installViewerGestures } = await import("../src/viewer.js");
+  class Surface extends EventTarget {
+    setPointerCapture() {}
+  }
+  const canvas = new Surface(),
+    calls = { pan: [], zoom: [], pick: [] };
+  let enabled = true;
+  installViewerGestures(canvas, {
+    enabled: () => enabled,
+    point: (e) => ({ x: e.clientX, y: e.clientY }),
+    pan: (x, y) => calls.pan.push([x, y]),
+    zoom: (f) => calls.zoom.push(f),
+    pick: (p) => calls.pick.push(p),
+    changed: () => {},
+  });
+  const emit = (type, id, x, y) => {
+    const e = new Event(type, { cancelable: true });
+    Object.assign(e, {
+      pointerId: id,
+      pointerType: "touch",
+      clientX: x,
+      clientY: y,
+      button: 0,
+    });
+    canvas.dispatchEvent(e);
+  };
+  emit("pointerdown", 1, 50, 50);
+  emit("pointerdown", 2, 100, 50);
+  emit("pointermove", 2, 150, 50);
+  emit("pointerup", 2, 150, 50);
+  emit("pointerup", 1, 50, 50);
+  assert.equal(calls.zoom[0], 2);
+  assert.equal(calls.pick.length, 0);
+  emit("pointerdown", 1, 50, 50);
+  emit("pointerup", 1, 50, 50);
+  assert.equal(calls.pick.length, 1);
+  enabled = false;
+  emit("pointerdown", 1, 50, 50);
+  emit("pointermove", 1, 100, 100);
+  emit("pointerup", 1, 100, 100);
+  assert.equal(calls.pick.length, 1);
+});

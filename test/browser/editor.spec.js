@@ -14,11 +14,17 @@ async function hole(
   split = false,
 ) {
   const box = await page.locator("#board").boundingBox();
-  const w = box.width / (split ? 2 : 1),
-    h = box.height,
+  const readOnly =
+    (await page.locator("html").getAttribute("data-readonly")) === "true";
+  const w = box.width / (split && !readOnly ? 2 : 1),
+    h = (box.height - (readOnly ? 96 : 0)) / (split && readOnly ? 2 : 1),
     zoom = Math.max(
       0.15,
-      Math.min(3, (w - 100) / ((cols + 1) * 28), (h - 160) / ((rows + 1) * 28)),
+      Math.min(
+        3,
+        (w - (readOnly ? 56 : 100)) / ((cols + 1) * 28),
+        (h - (readOnly ? 100 : 160)) / ((rows + 1) * 28),
+      ),
     );
   return {
     x:
@@ -26,8 +32,13 @@ async function hole(
       w / 2 -
       ((cols - 1) * 28 * zoom) / 2 +
       (face === "front" ? cols - 1 - x : x) * 28 * zoom +
-      (split && face === "front" ? w : 0),
-    y: box.y + h / 2 - ((rows - 1) * 28 * zoom) / 2 + y * 28 * zoom,
+      (split && !readOnly && face === "front" ? w : 0),
+    y:
+      box.y +
+      (split && readOnly && face === "front" ? h : 0) +
+      h / 2 -
+      ((rows - 1) * 28 * zoom) / 2 +
+      y * 28 * zoom,
   };
 }
 async function clickHole(page, x, y, face = "back", cols = 20, rows = 15) {
@@ -580,4 +591,153 @@ test("元件面直接绘制和编辑锡线，翻面保持同一条线路", async
       ),
   );
   await page.screenshot({ path: "artifacts/back-solder.png" });
+});
+
+test("公共元件库搜索、分类、直接放置及实例独立", async ({ page }) => {
+  await newBoard(page);
+  await page.locator('[data-action="library"]').click();
+  await page.locator("#library-search").fill("单排 4");
+  await expect(page.locator("[data-library]")).toHaveCount(1);
+  await page.locator('[data-library="header-4"]').click();
+  await clickHole(page, 3, 3);
+  let p = await saved(page);
+  expect(p.objects[0]).toMatchObject({ name: "J1", type: "component" });
+  expect(p.objects[0].pins).toHaveLength(4);
+  await page.locator('[data-pin="0"]').fill("VCC");
+  await page.locator('[data-pin="0"]').press("Tab");
+  await page.locator('[data-action="library"]').click();
+  await page.locator('[data-library="header-4"]').click();
+  await clickHole(page, 3, 6);
+  p = await saved(page);
+  expect(p.objects[1].pins[0].label).toBe("1");
+  expect(p.objects[1].name).toBe("J2");
+  await page.locator('[data-action="library"]').click();
+  await page.locator("#library-category").selectOption("贴片");
+  await expect(page.locator("[data-library]")).toHaveCount(2);
+  await page.locator('[data-library="smd-resistor"]').click();
+  await clickHole(page, 8.5, 5, "front");
+  p = await saved(page);
+  expect(p.objects[2]).toMatchObject({ mounting: "smd", kind: "resistor" });
+});
+
+test("手机只读打开、详情、平移缩放及编辑隔离", async ({
+  browser,
+  browserName,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-readonly", "true");
+  await expect(page.locator(".tools")).toBeHidden();
+  await expect(page.locator('[data-action="new"]')).toBeHidden();
+  await expect(page.locator("#project-name")).toHaveAttribute("readonly", "");
+  await page.locator('[data-action="viewer-demo"]').click();
+  await expect(page.locator("#project-name")).toHaveValue(
+    "双排模块 · 布线示例",
+  );
+  expect(
+    await page.evaluate(() => localStorage.getItem("fantasyperf.project.v1")),
+  ).toBeNull();
+  const box = await page.locator("#board").boundingBox();
+  await page.mouse.move(box.x + 100, box.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 155, box.y + 135, { steps: 5 });
+  await page.mouse.up();
+  await page.locator('[data-action="zoom-in"]').click();
+  await page.locator('[data-action="fit"]').last().click();
+  if (browserName === "chromium") {
+    const cdp = await context.newCDPSession(page);
+    const y = box.y + box.height / 2;
+    const before = await page.locator("#zoom-label").textContent();
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        { x: 145, y },
+        { x: 245, y },
+      ],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [
+        { x: 95, y },
+        { x: 295, y },
+      ],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await expect(page.locator("#zoom-label")).not.toHaveText(before);
+    await page.locator('[data-action="fit"]').last().click();
+  }
+  const target = await hole(page, 8, 5);
+  await page.touchscreen.tap(target.x, target.y);
+  await expect(page.locator(".inspector")).toBeVisible();
+  await expect(page.locator("#inspector-content")).toContainText("U1");
+  await expect(page.locator("#inspector-content input")).toHaveCount(0);
+  await page.locator('[data-action="viewer-close"]').click();
+  await page.locator('[data-action="viewer-wires"]').click();
+  await page.locator("[data-viewer-wire]").first().click();
+  await expect(page.locator("#inspector-content")).toContainText(
+    "建议裁线长度",
+  );
+  await page.locator('[data-action="viewer-close"]').click();
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("r");
+  await page.keyboard.press("Control+v");
+  await page.locator('[data-view="front"]').click();
+  await page.locator('[data-view="split"]').click();
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  await page.screenshot({ path: `artifacts/mobile-${browserName}.png` });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+    390,
+  );
+  expect(
+    await page.evaluate(() => localStorage.getItem("fantasyperf.project.v1")),
+  ).toBeNull();
+  const { demoProject } = await import("../../src/core.js");
+  const imported = demoProject();
+  imported.name = "验收项目";
+  const png = await page.evaluate(() => {
+    const c = document.createElement("canvas");
+    c.width = 40;
+    c.height = 20;
+    return c.toDataURL("image/png");
+  });
+  imported.reference = {
+    name: "reference.png",
+    dataUrl: png,
+    naturalWidth: 40,
+    naturalHeight: 20,
+    x: 24,
+    y: 76,
+    width: 360,
+    opacity: 1,
+    visible: true,
+  };
+  await page.locator("#file-input").setInputFiles({
+    name: "viewer.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(imported)),
+  });
+  await expect(page.locator("#project-name")).toHaveValue("验收项目");
+  await page.locator('[data-action="viewer-reference"]').click();
+  await expect(page.locator(".viewer-reference img")).toBeVisible();
+  await page.locator("[data-close]").first().click();
+  expect(
+    await page.evaluate(() => localStorage.getItem("fantasyperf.project.v1")),
+  ).toBeNull();
+  expect(errors).toEqual([]);
+  await context.close();
 });

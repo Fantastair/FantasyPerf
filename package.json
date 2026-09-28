@@ -2,6 +2,7 @@
   "name": "fantasy-perf",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "node scripts/serve.mjs",
@@ -9,7 +10,8 @@
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "test:e2e": "playwright test --project=chromium --project=webkit",
-    "test:e2e:all": "playwright test"
+    "test:e2e:all": "playwright test",
+    "preview:lan": "npm run build && node scripts/serve.mjs --lan"
   },
   "engines": {
     "node": ">=20"

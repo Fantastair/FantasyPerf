@@ -77,6 +77,9 @@
         <button data-tool="component" class="tool" title="放置元件 · C">
           <span>▦</span>元件<kbd>C</kbd>
         </button>
+        <button class="tool" data-action="library" title="公共元件库">
+          <span>▤</span>元件库
+        </button>
         <button data-tool="solder" class="tool" title="焊盘面锡线 · S">
           <span>⌁</span>锡线<kbd>S</kbd>
         </button>
@@ -126,6 +129,17 @@
             ＋ 放置第一个元件</button
           ><button data-action="demo">查看示例</button>
         </div>
+        <div class="viewer-welcome" id="viewer-welcome" hidden>
+          <h1>查看布线图</h1>
+          <p>打开电脑导出的项目文件，单指拖动、双指缩放。</p>
+          <button data-action="open" class="primary">打开项目</button
+          ><button data-action="viewer-demo">查看示例</button>
+        </div>
+        <div class="viewer-actions">
+          <span>只读查看</span><button data-action="viewer-details">详情</button
+          ><button data-action="viewer-wires">跳线清单</button
+          ><button data-action="viewer-reference">参考图</button>
+        </div>
         <div class="canvas-bottom">
           <span id="selection-hint">孔距 2.54 mm</span>
           <div class="zoom-controls">
@@ -137,6 +151,13 @@
       </section>
       <aside class="inspector">
         <div class="panel-tabs">
+          <button
+            class="viewer-close"
+            data-action="viewer-close"
+            aria-label="收起详情"
+          >
+            ×
+          </button>
           <button data-panel="properties" class="active">属性</button
           ><button data-panel="wires">
             跳线清单 <span id="wire-count">0</span>
