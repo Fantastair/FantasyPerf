@@ -59,13 +59,13 @@ export function viewsFor(width, height, view, stacked = false) {
   if (stacked) height = Math.max(100, height - 96);
   if (view === "split" && stacked)
     return [
-      { face: "back", x: 0, y: 0, w: width, h: height / 2 },
-      { face: "front", x: 0, y: height / 2, w: width, h: height / 2 },
+      { face: "front", x: 0, y: 0, w: width, h: height / 2 },
+      { face: "back", x: 0, y: height / 2, w: width, h: height / 2 },
     ];
   return view === "split"
     ? [
-        { face: "back", x: 0, y: 0, w: width / 2, h: height },
-        { face: "front", x: width / 2, y: 0, w: width / 2, h: height },
+        { face: "front", x: 0, y: 0, w: width / 2, h: height },
+        { face: "back", x: width / 2, y: 0, w: width / 2, h: height },
       ]
     : [{ face: view, x: 0, y: 0, w: width, h: height }];
 }
@@ -130,7 +130,7 @@ function line(ctx, points, color, width) {
 export function labelBox(ctx, component, pin, board, view, camera) {
   const pos = toScreen(pinPosition(component, pin), board, view, camera),
     s = CELL * camera.zoom;
-  const dx = (pin.labelDx ?? 0) * s * (view.face === "front" ? -1 : 1),
+  const dx = (pin.labelDx ?? 0) * s * (view.face === "back" ? -1 : 1),
     dy = (pin.labelDy ?? -0.55) * s;
   const align = dx < -0.1 ? "right" : dx > 0.1 ? "left" : "center";
   const fontSize = Math.max(9, Math.min(13, 12 * camera.zoom));
@@ -192,12 +192,12 @@ export function drawScene(
     ctx.shadowColor = ink("#314b4f0c");
     ctx.shadowBlur = 14;
     ctx.shadowOffsetY = 5;
-    ctx.fillStyle = v.face === "front" ? ink("#f0eee6") : ink("#e7eeeb");
+    ctx.fillStyle = v.face === "back" ? ink("#f0eee6") : ink("#e7eeeb");
     ctx.beginPath();
     ctx.roundRect(bx, by, bw, bh, 6);
     ctx.fill();
     ctx.shadowColor = "transparent";
-    ctx.strokeStyle = v.face === "front" ? ink("#dedbce") : ink("#cfddd7");
+    ctx.strokeStyle = v.face === "back" ? ink("#dedbce") : ink("#cfddd7");
     ctx.lineWidth = 1;
     ctx.stroke();
     for (let x = 0; x < board.cols; x++)
@@ -210,7 +210,7 @@ export function drawScene(
           p.y > height + 10
         )
           continue;
-        if (v.face === "front")
+        if (v.face === "back")
           circle(
             ctx,
             p.x,
@@ -225,8 +225,8 @@ export function drawScene(
           p.x,
           p.y,
           Math.max(1.2, 2.4 * camera.zoom),
-          v.face === "front" ? ink("#f7f5ee") : ink("#f7faf8"),
-          v.face === "front" ? ink("#ae985f") : ink("#bdcbc5"),
+          v.face === "back" ? ink("#f7f5ee") : ink("#f7faf8"),
+          v.face === "back" ? ink("#ae985f") : ink("#bdcbc5"),
           0.8,
         );
       }
@@ -236,7 +236,7 @@ export function drawScene(
       text(ctx, columnName(x), p.x, by - 15, ink("#899b9f"), 10);
     }
     for (let y = 0; y < board.rows; y += step) {
-      const p = to({ x: v.face === "front" ? board.cols - 1 : 0, y });
+      const p = to({ x: v.face === "back" ? board.cols - 1 : 0, y });
       text(ctx, String(y + 1), bx - 17, p.y, ink("#899b9f"), 10);
     }
     const a1 = to({ x: 0, y: 0 });
@@ -249,7 +249,7 @@ export function drawScene(
     if (state.readOnly && !exporting)
       text(
         ctx,
-        v.face === "back" ? "元件面 · A1 左上" : "焊盘面 · A1 右上",
+        v.face === "front" ? "元件面 · A1 左上" : "焊盘面 · A1 右上",
         v.x + v.w - 12,
         v.y + 20,
         ink("#82969b"),
@@ -259,7 +259,7 @@ export function drawScene(
     else
       text(
         ctx,
-        `${v.face === "back" ? "背面 · 元件面" : "正面 · 焊盘面"}  /  A1 ${v.face === "back" ? "左上" : "右上"}`,
+        `${v.face === "front" ? "正面 · 元件面" : "背面 · 焊盘面"}  /  A1 ${v.face === "front" ? "左上" : "右上"}`,
         v.x + v.w / 2,
         exporting ? 50 : Math.max(v.y + (state.readOnly ? 40 : 73), by - 42),
         ink("#82969b"),
@@ -486,7 +486,7 @@ export function drawScene(
     if (
       !exporting &&
       state.draft &&
-      (state.draft.type === "solder" || v.face === "back")
+      (state.draft.type === "solder" || v.face === "front")
     ) {
       const ps = state.draft.preview ?? state.draft.points;
       if (ps.length)

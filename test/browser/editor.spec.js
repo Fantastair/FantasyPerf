@@ -8,7 +8,7 @@ async function hole(
   page,
   x,
   y,
-  face = "back",
+  face = "front",
   cols = 20,
   rows = 15,
   split = false,
@@ -31,17 +31,17 @@ async function hole(
       box.x +
       w / 2 -
       ((cols - 1) * 28 * zoom) / 2 +
-      (face === "front" ? cols - 1 - x : x) * 28 * zoom +
-      (split && !readOnly && face === "front" ? w : 0),
+      (face === "back" ? cols - 1 - x : x) * 28 * zoom +
+      (split && !readOnly && face === "back" ? w : 0),
     y:
       box.y +
-      (split && readOnly && face === "front" ? h : 0) +
+      (split && readOnly && face === "back" ? h : 0) +
       h / 2 -
       ((rows - 1) * 28 * zoom) / 2 +
       y * 28 * zoom,
   };
 }
-async function clickHole(page, x, y, face = "back", cols = 20, rows = 15) {
+async function clickHole(page, x, y, face = "front", cols = 20, rows = 15) {
   const p = await hole(page, x, y, face, cols, rows);
   await page.mouse.click(p.x, p.y);
 }
@@ -74,15 +74,15 @@ test("完整验收：元件、标注、布线、镜像、编辑、撤销、保�
   let p = await saved(page);
   expect(p.objects.filter((o) => o.type === "component")).toHaveLength(3);
   expect(p.objects[0].pins).toHaveLength(8);
-  await page.locator('[data-view="front"]').click();
+  await page.locator('[data-view="back"]').click();
   await page.locator('.tools [data-tool="solder"]').click();
-  await clickHole(page, 2, 3, "front");
-  await clickHole(page, 7, 4, "front");
+  await clickHole(page, 2, 3, "back");
+  await clickHole(page, 7, 4, "back");
   await page.keyboard.press("Enter");
-  await page.locator('[data-view="front"]').click();
+  await page.locator('[data-view="back"]').click();
   await page.locator('.tools [data-tool="solder"]').click();
-  await clickHole(page, 3, 3, "front");
-  await clickHole(page, 7, 7, "front");
+  await clickHole(page, 3, 3, "back");
+  await clickHole(page, 7, 7, "back");
   await page.keyboard.press("Enter");
   await page.locator('.tools [data-tool="wire"]').click();
   await clickHole(page, 10, 5);
@@ -121,8 +121,8 @@ test("完整验收：元件、标注、布线、镜像、编辑、撤销、保�
   p = await saved(page);
   expect(p.objects.at(-1).points[2]).toEqual({ x: 12, y: 10 });
   await page.locator('[data-action="redo"]').click();
-  await page.locator('[data-view="front"]').click();
-  const a1 = await hole(page, 0, 0, "front");
+  await page.locator('[data-view="back"]').click();
+  const a1 = await hole(page, 0, 0, "back");
   await page.mouse.move(a1.x, a1.y);
   await expect(page.locator("#hole-position")).toHaveText("A1");
   await page.locator('[data-view="split"]').click();
@@ -152,7 +152,9 @@ test("完整验收：元件、标注、布线、镜像、编辑、撤销、保�
     .setInputFiles("artifacts/acceptance.fantasyperf.json");
   await page.locator("#confirm-import").click();
   p = await saved(page);
-  expect(p).toEqual(snapshot);
+  // 导出文件比自动存档多一个导出时间戳，其余数据必须完全一致。
+  expect(Number.isNaN(Date.parse(p.meta.savedAt))).toBe(false);
+  expect({ ...p, meta: null }).toEqual({ ...snapshot, meta: null });
   expect(errors).toEqual([]);
 });
 test("模板、引脚标注拖动、独立移动与保护板尺寸", async ({ page }) => {
@@ -193,10 +195,10 @@ test("模板、引脚标注拖动、独立移动与保护板尺寸", async ({ pa
 });
 test("取消绘制不落盘，自定义元件可建立并重开", async ({ page }) => {
   await newBoard(page);
-  await page.locator('[data-view="front"]').click();
+  await page.locator('[data-view="back"]').click();
   await page.locator('.tools [data-tool="solder"]').click();
-  await clickHole(page, 1, 1, "front");
-  await clickHole(page, 4, 4, "front");
+  await clickHole(page, 1, 1, "back");
+  await clickHole(page, 4, 4, "back");
   await page.keyboard.press("Escape");
   let p = await saved(page);
   expect(p.objects).toHaveLength(0);
@@ -232,7 +234,7 @@ test("并排框选能跨面整体移动，元件单独移动时线路不变", as
     original.objects[3].points[0].x + 1,
   );
   await page.locator('[data-action="undo"]').click();
-  await page.locator('[data-view="back"]').click();
+  await page.locator('[data-view="front"]').click();
   await clickHole(page, 8, 5);
   await page.keyboard.press("ArrowRight");
   moved = await saved(page);
@@ -305,7 +307,7 @@ test("参考图导入、拖动、缩放、隐藏、撤销和项目往返", async
   await expect(page.locator(".reference-image")).toBeHidden();
   await page.locator("#reference-visible").check();
   await saved(page);
-  await page.locator('[data-view="front"]').click();
+  await page.locator('[data-view="back"]').click();
   await expect(page.locator(".reference-image")).toBeVisible();
   await expect(page.locator(".reference-image")).toHaveCSS("transform", "none");
   await page.reload();
@@ -455,8 +457,8 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   await expect(page.locator("#modal")).toContainText("0603 / 0805");
   await page.locator("#smd-name").fill("R1 · 10k");
   await page.locator("#place-smd").click();
-  await expect(page.locator('[data-view="front"]')).toHaveClass("active");
-  await clickHole(page, 4.5, 4, "front");
+  await expect(page.locator('[data-view="back"]')).toHaveClass("active");
+  await clickHole(page, 4.5, 4, "back");
   let p = await saved(page);
   expect(p.objects[0]).toMatchObject({
     type: "component",
@@ -471,8 +473,8 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   p = await saved(page);
   expect(p.objects[0].rotation).toBe(90);
   await expect(page.locator("#inspector-content")).toContainText("E5 ↔ E6");
-  const from = await hole(page, 4, 4.5, "front"),
-    to = await hole(page, 6, 6.5, "front");
+  const from = await hole(page, 4, 4.5, "back"),
+    to = await hole(page, 6, 6.5, "back");
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 5 });
@@ -484,7 +486,7 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   await expect(page.locator("#smd-name")).toHaveValue("C1");
   await page.locator("#place-smd").click();
   await page.keyboard.press("r");
-  await clickHole(page, 10, 8.5, "front");
+  await clickHole(page, 10, 8.5, "back");
   p = await saved(page);
   expect(p.objects[1]).toMatchObject({
     kind: "capacitor",
@@ -499,14 +501,14 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
     mounting: "smd",
     kind: "capacitor",
   });
-  await expect(page.locator('[data-view="front"]')).toHaveClass("active");
+  await expect(page.locator('[data-view="back"]')).toHaveClass("active");
   await page.locator('[data-action="undo"]').click();
   p = await saved(page);
   expect(p.objects).toHaveLength(2);
-  await page.locator('[data-view="back"]').click();
+  await page.locator('[data-view="front"]').click();
   await clickHole(page, 6, 6.5);
   await expect(page.locator("#inspector-content")).toContainText("洞洞板");
-  await page.locator('[data-view="front"]').click();
+  await page.locator('[data-view="back"]').click();
   await page.evaluate(
     () =>
       new Promise((resolve) =>
@@ -525,8 +527,8 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   await page.locator("#confirm-import").click();
   expect((await saved(page)).objects).toEqual(p.objects);
   await page.reload();
-  await page.locator('[data-view="front"]').click();
-  await clickHole(page, 6, 6.5, "front");
+  await page.locator('[data-view="back"]').click();
+  await clickHole(page, 6, 6.5, "back");
   await page.locator('[data-action="edit-component"]').click();
   await expect(page.locator("#smd-kind")).toHaveValue("resistor");
   await page.locator("#smd-name").fill("R1 · 22k");
@@ -535,11 +537,11 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   expect(errors).toEqual([]);
 });
 
-test("元件面直接绘制和编辑锡线，翻面保持同一条线路", async ({ page }) => {
+test("元件面查看时可直接绘制并编辑背面锡线，翻面保持同一条线路", async ({ page }) => {
   await newBoard(page);
   await addComponent(page, "U1", 7, 4);
   await page.locator('.tools [data-tool="solder"]').click();
-  await expect(page.locator('[data-view="back"]')).toHaveClass("active");
+  await expect(page.locator('[data-view="front"]')).toHaveClass("active");
   await clickHole(page, 2, 3);
   await clickHole(page, 7, 4);
   await page.keyboard.press("Enter");
@@ -567,11 +569,11 @@ test("元件面直接绘制和编辑锡线，翻面保持同一条线路", async
     { x: 7, y: 2 },
     { x: 7, y: 4 },
   ]);
-  await page.locator('[data-view="front"]').click();
-  await clickHole(page, 4, 2, "front");
+  await page.locator('[data-view="back"]').click();
+  await clickHole(page, 4, 2, "back");
   await expect(page.locator("#object-name")).toHaveValue("T1");
   expect((await saved(page)).objects).toEqual(p.objects);
-  await page.locator('[data-view="back"]').click();
+  await page.locator('[data-view="front"]').click();
   await page.locator('.tools [data-tool="solder"]').click();
   await clickHole(page, 5, 2);
   await clickHole(page, 5, 6);
@@ -593,6 +595,69 @@ test("元件面直接绘制和编辑锡线，翻面保持同一条线路", async
   await page.screenshot({ path: "artifacts/back-solder.png" });
 });
 
+test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  const { demoProject, FORMAT_VERSION } = await import("../../src/core.js");
+  const storedOf = () =>
+    page.evaluate((key) => JSON.parse(localStorage.getItem(key)), store);
+  const open = (name, project) =>
+    page.locator("#file-input").setInputFiles({
+      name,
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(project)),
+    });
+  const legacy = demoProject();
+  legacy.name = "旧版项目";
+  legacy.version = "1.0.0";
+  delete legacy.meta;
+  await open("legacy.json", legacy);
+  await expect(page.locator("#modal")).toContainText(
+    `将自动升级为 v${FORMAT_VERSION}`,
+  );
+  await page.locator("#confirm-import").click();
+  await expect(page.locator("#toast")).toContainText(
+    "格式已从 v1.0.0 升级到 v1.1.0",
+  );
+  await expect(page.locator("#project-name")).toHaveValue("旧版项目");
+  // 等自动保存落盘后再检查升级后的数据。
+  await expect
+    .poll(async () => (await storedOf())?.objects?.length)
+    .toBe(legacy.objects.length);
+  const stored = await storedOf();
+  expect(stored.version).toBe(FORMAT_VERSION);
+  expect(stored.meta).toEqual({
+    app: "FantasyPerf",
+    appVersion: null,
+    savedAt: null,
+  });
+  expect(stored.objects).toEqual(legacy.objects);
+  // 更高的小版本只包含修复，直接打开并归一到当前格式版本。
+  const patch = demoProject();
+  patch.name = "补丁项目";
+  patch.version = "1.1.9";
+  await open("patch.json", patch);
+  await expect(page.locator("#modal")).not.toContainText("升级");
+  await page.locator("#confirm-import").click();
+  await expect
+    .poll(async () => (await storedOf())?.name)
+    .toBe("补丁项目");
+  expect((await storedOf()).version).toBe(FORMAT_VERSION);
+  const current = await storedOf();
+  // 更高的中版本与大版本都被拒绝，当前项目不受影响。
+  for (const [file, version, message] of [
+    ["minor.json", "1.2.0", "高于当前工具支持"],
+    ["major.json", "2.0.0", "大版本"],
+  ]) {
+    const future = demoProject();
+    future.version = version;
+    await open(file, future);
+    await expect(page.locator("#toast")).toContainText(message);
+  }
+  expect(await storedOf()).toEqual(current);
+  expect(errors).toEqual([]);
+});
 test("公共元件库搜索、分类、直接放置及实例独立", async ({ page }) => {
   await newBoard(page);
   await page.locator('[data-action="library"]').click();
@@ -615,7 +680,7 @@ test("公共元件库搜索、分类、直接放置及实例独立", async ({ pa
   await page.locator("#library-category").selectOption("贴片");
   await expect(page.locator("[data-library]")).toHaveCount(2);
   await page.locator('[data-library="smd-resistor"]').click();
-  await clickHole(page, 8.5, 5, "front");
+  await clickHole(page, 8.5, 5, "back");
   p = await saved(page);
   expect(p.objects[2]).toMatchObject({ mounting: "smd", kind: "resistor" });
 });

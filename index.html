@@ -6,7 +6,7 @@
     <title>FantasyPerf · 洞洞板工作台</title>
     <meta
       name="description"
-      content="以孔位和引脚标注为核心的洞洞板布局工具，支持正反面布线与跳线裁切清单。"
+      content="以孔位和引脚标注为核心的洞洞板布局工具，支持正反面布线，可导出全部元件、跳线与锡线清单。"
     />
     <link
       rel="icon"
@@ -60,9 +60,9 @@
         ><span id="summary">30 × 20 孔 · 2.54 mm</span>
       </div>
       <div class="segmented" role="group" aria-label="板面视图">
-        <button data-view="back" class="active">
-          元件面 <small>背面</small></button
-        ><button data-view="front">焊盘面 <small>正面</small></button
+        <button data-view="front" class="active">
+          元件面 <small>正面</small></button
+        ><button data-view="back">焊盘面 <small>背面</small></button
         ><button data-view="split">并排核对</button>
       </div>
       <button data-action="help" class="help-button">
@@ -110,7 +110,7 @@
       </aside>
       <section class="stage" aria-label="洞洞板编辑画布">
         <div class="stage-top">
-          <span class="view-badge" id="view-label">背面 · 元件面</span
+          <span class="view-badge" id="view-label">正面 · 元件面</span
           ><span id="mode-options"></span
           ><span class="stage-note" id="stage-note"
             >左右翻板，孔位编号保持不变</span

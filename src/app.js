@@ -3,7 +3,13 @@ import { installViewerGestures } from "./viewer.js";
 import { createReferenceLayer } from "./reference.js";
 import {
   PITCH,
+  FORMAT,
+  FORMAT_VERSION,
+  APP_VERSION,
+  compareVersions,
+  parseVersion,
   objectFace,
+  faceName,
   editableOnFace,
   smdPlacement,
   COLORS,
@@ -30,7 +36,7 @@ import {
   regularPins,
   demoProject,
   validateProject,
-  wireCSV,
+  objectsCSV,
 } from "./core.js";
 import {
   CELL,
@@ -50,6 +56,7 @@ const esc = (s) =>
         c
       ],
   );
+// 存档键名跨格式版本保持不变：格式版本写在存档 JSON 内部，旧存档仍会被读取并升级。
 const STORE = "fantasyperf.project.v1",
   TEMPLATES = "fantasyperf.templates.v1";
 let project = newProject(),
@@ -94,7 +101,7 @@ try {
     .slice(0, 100);
 } catch {}
 const state = {
-  view: "back",
+  view: "front",
   tool: "select",
   camera: { zoom: 1, panX: 0, panY: 0 },
   selected: new Set(),
@@ -199,7 +206,7 @@ function setTool(tool) {
   state.tool = tool;
   state.selected.clear();
   if ((tool === "wire" || tool === "component") && state.view !== "split")
-    state.view = "back";
+    state.view = "front";
   if (tool === "component") componentDialog();
   refresh();
 }
@@ -271,17 +278,13 @@ function refresh({ preserveInspector = false } = {}) {
   $('[data-action="undo"]').disabled = !history.past.length;
   $('[data-action="redo"]').disabled = !history.future.length;
   $("#view-label").textContent =
-    state.view === "split"
-      ? "两面同步 · 左右镜像"
-      : state.view === "front"
-        ? "正面 · 焊盘面"
-        : "背面 · 元件面";
+    state.view === "split" ? "两面同步 · 左右镜像" : faceName(state.view);
   $("#status-face").textContent =
     state.view === "split"
       ? "并排核对"
       : state.view === "front"
-        ? "焊盘面"
-        : "元件面";
+        ? "元件面"
+        : "焊盘面";
   $("#mode-options").innerHTML =
     state.tool === "wire"
       ? `<select id="wire-mode" aria-label="跳线模式"><option value="direct" ${state.wireMode === "direct" ? "selected" : ""}>直连跳线</option><option value="orthogonal" ${state.wireMode === "orthogonal" ? "selected" : ""}>直角跳线</option></select>`
@@ -369,12 +372,12 @@ function renderInspector() {
   );
   if (panel === "wires") {
     const wires = project.objects.filter((o) => o.type === "wire");
-    root.innerHTML = `<h2 class="section-heading">裁线清单 <small>${wires.length} 根</small></h2><p class="muted">贴板路径 + 两端余量，单位 mm</p>${wires.length ? wires.map((o) => `<button class="wire-row" data-wire-id="${esc(o.id)}"><span class="wire-swatch" style="background:${o.color}"></span><span><strong>${esc(o.name)}</strong><small>${holeName(o.points[0])} → ${holeName(o.points.at(-1))}</small></span><span class="wire-length">${cutLength(o).toFixed(1)}</span></button>`).join("") : `<div class="empty-list">还没有跳线<br>选择左侧「跳线」连接两个孔位</div>`}${wires.length ? `<div class="data-row"><span>总裁线长度</span><strong>${wires.reduce((s, o) => s + cutLength(o), 0).toFixed(1)} mm</strong></div><button class="wide" data-action="csv">导出 CSV 清单</button>` : ""}`;
+    root.innerHTML = `<h2 class="section-heading">裁线清单 <small>${wires.length} 根</small></h2><p class="muted">贴板路径 + 两端余量，单位 mm</p>${wires.length ? wires.map((o) => `<button class="wire-row" data-wire-id="${esc(o.id)}"><span class="wire-swatch" style="background:${o.color}"></span><span><strong>${esc(o.name)}</strong><small>${holeName(o.points[0])} → ${holeName(o.points.at(-1))}</small></span><span class="wire-length">${cutLength(o).toFixed(1)}</span></button>`).join("") : `<div class="empty-list">还没有跳线<br>选择左侧「跳线」连接两个孔位</div>`}${wires.length ? `<div class="data-row"><span>总裁线长度</span><strong>${wires.reduce((s, o) => s + cutLength(o), 0).toFixed(1)} mm</strong></div><button class="wide" data-action="csv">导出全部元件清单</button>` : ""}`;
     root.querySelectorAll("[data-wire-id]").forEach(
       (b) =>
         (b.onclick = () => {
           state.selected = new Set([b.dataset.wireId]);
-          state.view = state.view === "split" ? "split" : "back";
+          state.view = state.view === "split" ? "split" : "front";
           state.tool = "select";
           panel = "properties";
           refresh();
@@ -422,7 +425,7 @@ function renderInspector() {
     return;
   }
   const o = selected[0];
-  root.innerHTML = `<h2 class="section-heading">${o.mounting === "smd" ? (o.kind === "resistor" ? "贴片电阻" : "贴片电容") : o.type === "component" ? "元件" : o.type === "wire" ? "跳线" : "锡线"}<small>${objectFace(o) === "front" ? "焊盘面" : "元件面"}</small></h2>${field("object-name", "名称", o.name)}`;
+  root.innerHTML = `<h2 class="section-heading">${o.mounting === "smd" ? (o.kind === "resistor" ? "贴片电阻" : "贴片电容") : o.type === "component" ? "元件" : o.type === "wire" ? "跳线" : "锡线"}<small>${faceName(objectFace(o))}</small></h2>${field("object-name", "名称", o.name)}`;
   $("#object-name").onchange = (e) =>
     commit(() => (o.name = e.target.value.trim() || o.name));
   if (o.mounting === "smd") {
@@ -523,7 +526,7 @@ function projectDialog(demo = false) {
     commit(() => (project = next));
     state.selected.clear();
     state.tool = "select";
-    state.view = "back";
+    state.view = "front";
     closeDialog();
     fit();
     refresh();
@@ -563,7 +566,7 @@ function smdDialog(existing = null) {
         project.objects[project.objects.findIndex((p) => p.id === o.id)] = o;
       });
     closeDialog();
-    if (state.view !== "split") state.view = "front";
+    if (state.view !== "split") state.view = "back";
     state.referenceSelected = false;
     state.selected = new Set(existing ? [o.id] : []);
     state.tool = existing ? "select" : "component";
@@ -638,7 +641,7 @@ function renderViewerInspector() {
       (b) =>
         (b.onclick = () => {
           state.selected = new Set([b.dataset.viewerWire]);
-          state.view = "back";
+          state.view = "front";
           panel = "properties";
           fit();
           refresh();
@@ -658,7 +661,7 @@ function renderViewerInspector() {
     };
     return;
   }
-  root.innerHTML = `<h2 class="section-heading">${esc(o.name)}</h2><p class="muted">${objectFace(o) === "front" ? "焊盘面" : "元件面"} · 只读</p>`;
+  root.innerHTML = `<h2 class="section-heading">${esc(o.name)}</h2><p class="muted">${faceName(objectFace(o))} · 只读</p>`;
   if (o.type === "component")
     root.insertAdjacentHTML(
       "beforeend",
@@ -813,7 +816,7 @@ function componentDialog(existing = null, template = null) {
       o.y = -b.minY;
       closeDialog();
       state.tool = "component";
-      if (state.view !== "split") state.view = "back";
+      if (state.view !== "split") state.view = "front";
       state.placement = o;
       refresh();
     }
@@ -863,7 +866,7 @@ function saveTemplates() {
 function exportDialog() {
   dialog(
     "导出设计",
-    `<p class="muted">项目文件保留全部可编辑数据；图片适合照图焊接。</p><div class="export-options"><button data-export="project">完整项目 <small>JSON · 包含板尺寸、元件、引脚和全部线路</small></button><button data-export="back">元件面 PNG <small>背面 · 元件与跳线</small></button><button data-export="front">焊盘面 PNG <small>正面 · 水平镜像，保留实际孔位编号</small></button><button data-export="split">并排 PNG <small>两面同步对照</small></button><button data-export="csv">跳线 CSV 清单 <small>编号、颜色、路径、两端余量与裁线长度</small></button></div>`,
+    `<p class="muted">项目文件保留全部可编辑数据；图片适合照图焊接。</p><div class="export-options"><button data-export="project">完整项目 <small>JSON · 格式 v${FORMAT_VERSION} · 生成工具 ${APP_VERSION}</small></button><button data-export="front">元件面 PNG <small>正面 · 元件与跳线</small></button><button data-export="back">焊盘面 PNG <small>背面 · 水平镜像，保留实际孔位编号</small></button><button data-export="split">并排 PNG <small>两面同步对照</small></button><button data-export="csv">全部元件 CSV 清单 <small>元件、引脚、跳线、锡线与裁线长度</small></button></div>`,
   );
   $$("[data-export]").forEach(
     (b) =>
@@ -871,15 +874,34 @@ function exportDialog() {
         const t = b.dataset.export;
         if (t === "project")
           download(
-            JSON.stringify(project, null, 2),
+            JSON.stringify(exportedProject(), null, 2),
             "application/json",
             ".fantasyperf.json",
           );
         else if (t === "csv")
-          download(wireCSV(project), "text/csv;charset=utf-8", "-跳线.csv");
+          download(
+            objectsCSV(project),
+            "text/csv;charset=utf-8",
+            "-元件清单.csv",
+          );
         else exportPNG(t);
       }),
   );
+}
+// Exports always carry the current format version, the tool version and the
+// export time, so a later release can recognise and upgrade the file in place.
+function exportedProject() {
+  return {
+    ...project,
+    format: FORMAT,
+    version: FORMAT_VERSION,
+    meta: {
+      ...(project.meta ?? {}),
+      app: FORMAT,
+      appVersion: APP_VERSION,
+      savedAt: new Date().toISOString(),
+    },
+  };
 }
 function download(data, type, suffix) {
   const blob = data instanceof Blob ? data : new Blob([data], { type });
@@ -912,7 +934,7 @@ function exportPNG(view) {
       download(
         blob,
         "image/png",
-        `-${view === "back" ? "元件面" : view === "front" ? "焊盘面" : "两面对照"}.png`,
+        `-${view === "front" ? "元件面" : view === "back" ? "焊盘面" : "两面对照"}.png`,
       );
     else toast("图片生成失败，请重试");
   }, "image/png");
@@ -920,7 +942,7 @@ function exportPNG(view) {
 function helpDialog() {
   dialog(
     "操作指南",
-    `<p class="muted">正面是焊盘面，背面是元件面。左右翻板时，同一孔位保持同一编号。</p><div class="shortcut-list">${[
+    `<p class="muted">正面是元件面，背面是焊盘面。左右翻板时，同一孔位保持同一编号。</p><div class="shortcut-list">${[
       ["选择 / 元件 / 锡线 / 跳线", "V / C / S / W"],
       ["多选 / 框选", "Shift 点击 / 拖动空白"],
       ["移动选中对象", "拖动 / 方向键"],
@@ -1084,7 +1106,8 @@ const actions = {
       if (saveTemplates()) toast("已保存本地元件模板");
     }
   },
-  csv: () => download(wireCSV(project), "text/csv;charset=utf-8", "-跳线.csv"),
+  csv: () =>
+    download(objectsCSV(project), "text/csv;charset=utf-8", "-元件清单.csv"),
 };
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button");
@@ -1130,7 +1153,14 @@ $("#file-input").onchange = async (e) => {
     return;
   }
   try {
-    const imported = validateProject(JSON.parse(await f.text()));
+    const raw = JSON.parse(await f.text());
+    // 旧格式文件（含早期的整数版本号）在校验时自动升级为当前版本。
+    const imported = validateProject(raw);
+    const from = parseVersion(raw.version);
+    const upgraded =
+      from && compareVersions(from, FORMAT_VERSION) < 0
+        ? `格式已从 v${from} 升级到 v${FORMAT_VERSION}`
+        : "";
     if (readOnly) {
       project = imported;
       state.selected.clear();
@@ -1138,12 +1168,16 @@ $("#file-input").onchange = async (e) => {
       document.body.classList.remove("viewer-details-open");
       fit();
       refresh();
-      toast("已打开，只读查看，不会覆盖编辑存档。");
+      toast(
+        upgraded
+          ? `已打开（${upgraded}），只读查看，不会覆盖编辑存档。`
+          : "已打开，只读查看，不会覆盖编辑存档。",
+      );
       return;
     }
     dialog(
       "打开项目",
-      `<p>将打开「${esc(imported.name)}」</p><p class="muted">${imported.board.cols} × ${imported.board.rows} 孔，${imported.objects.length} 个对象。当前设计可通过撤销恢复。</p>`,
+      `<p>将打开「${esc(imported.name)}」</p><p class="muted">${imported.board.cols} × ${imported.board.rows} 孔，${imported.objects.length} 个对象。当前设计可通过撤销恢复。</p>${upgraded ? `<div class="info-box">文件格式为 v${from}，将自动升级为 v${FORMAT_VERSION}，原有数据全部保留。</div>` : ""}`,
       '<button data-close>取消</button><button id="confirm-import" class="primary">打开项目</button>',
     );
     $("#confirm-import").onclick = () => {
@@ -1154,7 +1188,7 @@ $("#file-input").onchange = async (e) => {
       closeDialog();
       fit();
       refresh();
-      toast("项目已完整恢复");
+      toast(upgraded ? `项目已完整恢复 · ${upgraded}` : "项目已完整恢复");
     };
   } catch (error) {
     toast("无法打开项目：" + error.message);
@@ -1302,7 +1336,7 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   if (state.tool === "solder" || state.tool === "wire") {
-    if (state.tool === "wire" && v.face !== "back") {
+    if (state.tool === "wire" && v.face !== "front") {
       toast("请在元件面绘制跳线");
       return;
     }
@@ -1466,7 +1500,7 @@ canvas.addEventListener("pointermove", (e) => {
         s = CELL * state.camera.zoom;
       pin.labelDx = clamp(
         (pin.labelDx ?? 0) +
-          ((p.x - d.start.x) / s) * (v.face === "front" ? -1 : 1),
+          ((p.x - d.start.x) / s) * (v.face === "back" ? -1 : 1),
         -100,
         100,
       );
@@ -1656,7 +1690,7 @@ document.addEventListener("keydown", (e) => {
     let dx =
         e.key === "ArrowLeft" ? -amount : e.key === "ArrowRight" ? amount : 0,
       dy = e.key === "ArrowUp" ? -amount : e.key === "ArrowDown" ? amount : 0;
-    if (state.view === "front") dx = -dx;
+    if (state.view === "back") dx = -dx;
     const d = constrainedDelta(selectedObjects(), dx, dy, project.board);
     commit(() => moveObjects(selectedObjects(), d.x, d.y));
     return;
