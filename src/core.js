@@ -1,3 +1,5 @@
+import demoData from "./demo-project.js";
+
 export const PITCH = 2.54;
 export const FORMAT = "FantasyPerf";
 // 项目数据格式使用三段式版本：
@@ -328,105 +330,7 @@ export function regularPins(kind, count = 8, spacing = 1, gap = 3) {
   });
 }
 export function demoProject() {
-  const p = newProject(20, 15, "双排模块 · 布线示例");
-  p.objects = [
-    {
-      id: uid(),
-      type: "component",
-      name: "U1",
-      x: 7,
-      y: 4,
-      rotation: 0,
-      pins: regularPins("double", 8, 1, 3).map((pin, i) => ({
-        ...pin,
-        label: ["VCC", "IN1", "IN2", "GND", "OUT2", "OUT1", "EN", "VCC"][i],
-      })),
-    },
-    {
-      id: uid(),
-      type: "component",
-      name: "J1 · 电源",
-      x: 2,
-      y: 3,
-      rotation: 0,
-      pins: regularPins("single", 2).map((pin, i) => ({
-        ...pin,
-        label: ["VCC", "GND"][i],
-      })),
-    },
-    {
-      id: uid(),
-      type: "component",
-      name: "J2 · 输出",
-      x: 14,
-      y: 10,
-      rotation: 0,
-      pins: regularPins("single", 3).map((pin, i) => ({
-        ...pin,
-        label: ["OUT1", "OUT2", "GND"][i],
-      })),
-    },
-    {
-      id: uid(),
-      type: "solder",
-      name: "T1",
-      points: [
-        { x: 2, y: 3 },
-        { x: 2, y: 4 },
-        { x: 7, y: 4 },
-      ],
-    },
-    {
-      id: uid(),
-      type: "solder",
-      name: "T2",
-      points: [
-        { x: 3, y: 3 },
-        { x: 3, y: 7 },
-        { x: 7, y: 7 },
-      ],
-    },
-    {
-      id: uid(),
-      type: "solder",
-      name: "T3",
-      points: [
-        { x: 5, y: 7 },
-        { x: 5, y: 11 },
-        { x: 16, y: 11 },
-        { x: 16, y: 10 },
-      ],
-    },
-    {
-      id: uid(),
-      type: "wire",
-      name: "W1",
-      mode: "direct",
-      color: COLORS[0],
-      allowanceStart: 3,
-      allowanceEnd: 3,
-      points: [
-        { x: 10, y: 5 },
-        { x: 14, y: 10 },
-      ],
-    },
-    {
-      id: uid(),
-      type: "wire",
-      name: "W2",
-      mode: "orthogonal",
-      color: COLORS[1],
-      allowanceStart: 3,
-      allowanceEnd: 3,
-      points: [
-        { x: 10, y: 6 },
-        { x: 12, y: 6 },
-        { x: 12, y: 10 },
-        { x: 15, y: 10 },
-      ],
-    },
-  ];
-  return p;
+  return validateProject(demoData);
 }
 export function validateProject(raw) {
   const data = upgradeProject(raw);
@@ -653,21 +557,6 @@ export function objectsCSV(project) {
         o.allowanceStart.toFixed(1),
         o.allowanceEnd.toFixed(1),
         cutLength(o).toFixed(1),
-      ]);
-    } else {
-      rows.push([
-        text(o.name),
-        "锡线",
-        face,
-        holeName(o.points[0]),
-        holeName(o.points.at(-1)),
-        "",
-        "",
-        `${o.points.length} 个路径点`,
-        lengthMM(o.points).toFixed(1),
-        "",
-        "",
-        "",
       ]);
     }
   }

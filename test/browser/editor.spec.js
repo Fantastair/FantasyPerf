@@ -62,6 +62,55 @@ async function addComponent(page, name, x, y, kind = "double", count = "8") {
   await page.locator("#place-component").click();
   await clickHole(page, x, y);
 }
+test("已验证的 555 示例保留完整设计，两个清单入口均不导出锡线", async ({
+  page,
+}) => {
+  const { demoProject } = await import("../../src/core.js");
+  const { readFile } = await import("node:fs/promises");
+  const example = demoProject(),
+    errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await page.locator('.tools [data-action="demo"]').click();
+  await expect(page.locator("#modal .info-box")).toContainText("10 × 8 孔");
+  await page.locator("#create-project").click();
+  expect(await saved(page)).toEqual(example);
+  await expect(page.locator("#project-name")).toHaveValue(example.name);
+  await expect(page.locator("#summary")).toContainText("10 × 8 孔");
+  await expect(page.locator(".reference-image")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.locator(".reference-image img").evaluate((image) => image.naturalWidth),
+    )
+    .toBe(example.reference.naturalWidth);
+  const downloadCSV = async (selector) => {
+    const pending = page.waitForEvent("download");
+    await page.locator(selector).click();
+    const download = await pending;
+    return readFile(await download.path(), "utf8");
+  };
+  await page.locator('[data-action="export"]').click();
+  await expect(page.locator('[data-export="csv"]')).not.toContainText("锡线");
+  const csv = await downloadCSV('[data-export="csv"]');
+  expect(csv.startsWith("\uFEFF")).toBe(true);
+  expect(csv.split("\r\n")).toHaveLength(12); // 表头 + 9 个元件 + 2 根跳线
+  expect(csv).not.toContain('"锡线"');
+  for (const object of example.objects.filter((o) => o.type !== "solder"))
+    expect(csv).toContain('"' + object.name + '"');
+  const pendingProject = page.waitForEvent("download");
+  await page.locator('[data-export="project"]').click();
+  const exported = JSON.parse(
+    await readFile(await (await pendingProject).path(), "utf8"),
+  );
+  expect(exported.objects).toEqual(example.objects);
+  expect(exported.board).toEqual(example.board);
+  expect(exported.reference).toEqual(example.reference);
+  await page.locator("[data-close]").click();
+  await page.locator('[data-panel="wires"]').click();
+  expect(await downloadCSV('[data-action="csv"]')).toBe(csv);
+  await page.screenshot({ path: "artifacts/555-example.png" });
+  expect(errors).toEqual([]);
+});
 test("完整验收：元件、标注、布线、镜像、编辑、撤销、保存、导出", async ({
   page,
 }) => {
@@ -214,9 +263,18 @@ test("取消绘制不落盘，自定义元件可建立并重开", async ({ page 
 });
 
 test("并排框选能跨面整体移动，元件单独移动时线路不变", async ({ page }) => {
+  const { demoProject } = await import("../../src/core.js");
+  const example = demoProject();
+  // 示例占满板边，验收时留出整体移动空间，参考图不遮挡框选。
+  Object.assign(example.board, { cols: 12, rows: 10 });
+  example.reference = null;
   await page.goto("/");
-  await page.locator('.tools [data-action="demo"]').click();
-  await page.locator("#create-project").click();
+  await page.locator("#file-input").setInputFiles({
+    name: "group-move.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(example)),
+  });
+  await page.locator("#confirm-import").click();
   const original = await saved(page);
   await page.locator('[data-view="split"]').click();
   const box = await page.locator("#board").boundingBox();
@@ -226,16 +284,18 @@ test("并排框选能跨面整体移动，元件单独移动时线路不变", as
     steps: 10,
   });
   await page.mouse.up();
-  await expect(page.locator("#selection-hint")).toContainText("已选 8 个对象");
+  await expect(page.locator("#selection-hint")).toContainText(
+    "已选 " + original.objects.length + " 个对象",
+  );
   await page.keyboard.press("ArrowRight");
   let moved = await saved(page);
   expect(moved.objects[0].x).toBe(original.objects[0].x + 1);
-  expect(moved.objects[3].points[0].x).toBe(
-    original.objects[3].points[0].x + 1,
+  expect(moved.objects.find((o) => o.type === "solder").points[0].x).toBe(
+    original.objects.find((o) => o.type === "solder").points[0].x + 1,
   );
   await page.locator('[data-action="undo"]').click();
   await page.locator('[data-view="front"]').click();
-  await clickHole(page, 8, 5);
+  await clickHole(page, 4, 3, "front", 12, 10);
   await page.keyboard.press("ArrowRight");
   moved = await saved(page);
   expect(moved.objects[0].x).toBe(original.objects[0].x + 1);
@@ -704,7 +764,7 @@ test("手机只读打开、详情、平移缩放及编辑隔离", async ({
   await expect(page.locator("#project-name")).toHaveAttribute("readonly", "");
   await page.locator('[data-action="viewer-demo"]').click();
   await expect(page.locator("#project-name")).toHaveValue(
-    "双排模块 · 布线示例",
+    "基于555定时器的LED多谐振荡器",
   );
   expect(
     await page.evaluate(() => localStorage.getItem("fantasyperf.project.v1")),
@@ -741,10 +801,10 @@ test("手机只读打开、详情、平移缩放及编辑隔离", async ({
     await expect(page.locator("#zoom-label")).not.toHaveText(before);
     await page.locator('[data-action="fit"]').last().click();
   }
-  const target = await hole(page, 8, 5);
+  const target = await hole(page, 4, 3, "front", 10, 8);
   await page.touchscreen.tap(target.x, target.y);
   await expect(page.locator(".inspector")).toBeVisible();
-  await expect(page.locator("#inspector-content")).toContainText("U1");
+  await expect(page.locator("#inspector-content")).toContainText("NE555");
   await expect(page.locator("#inspector-content input")).toHaveCount(0);
   await page.locator('[data-action="viewer-close"]').click();
   await page.locator('[data-action="viewer-wires"]').click();

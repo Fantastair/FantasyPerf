@@ -132,6 +132,30 @@ test("双排引脚、旋转、群组移动边界", () => {
   moveObjects([c], d.x, d.y);
   assert.ok(fits([c], p.board));
 });
+test("内置示例保留已验证的 555 设计与参考图，每次打开独立编辑", () => {
+  const p = demoProject();
+  assert.equal(p.name, "基于555定时器的LED多谐振荡器");
+  assert.deepEqual(p.board, { cols: 10, rows: 8, pitch: 2.54 });
+  assert.deepEqual(
+    ["component", "wire", "solder"].map(
+      (type) => p.objects.filter((o) => o.type === type).length,
+    ),
+    [9, 2, 18],
+  );
+  assert.deepEqual(
+    p.objects[0].pins.map((pin) => pin.label),
+    ["GND", "TRIG", "OUT", "RESET", "CONT", "THRES", "DISCH", "VCC"],
+  );
+  assert.match(p.reference.dataUrl, /^data:image\/webp;base64,/);
+  assert.equal(p.reference.name, "SCH.png");
+  assert.equal(p.reference.naturalWidth, 854);
+  assert.equal(p.reference.naturalHeight, 786);
+  const original = clone(p);
+  p.objects[0].pins[0].label = "编辑过的引脚";
+  p.objects.find((o) => o.type === "wire").points[0].x++;
+  p.reference.visible = false;
+  assert.deepEqual(demoProject(), original);
+});
 test("元件单独移动不改变线路", () => {
   const p = demoProject(),
     w = clone(p.objects.filter((o) => o.type !== "component"));
@@ -148,7 +172,7 @@ test("项目完整往返及导入拒绝损坏数据", () => {
     (p) => (p.board.cols = 1),
     (p) => (p.objects[0].pins[0].label = {}),
     (p) => (p.objects[0].id = p.objects[1].id),
-    (p) => (p.objects[3].points[1] = { x: 8, y: 8 }),
+    (p) => (p.objects.find((o) => o.type === "solder").points[1] = { x: 8, y: 8 }),
     (p) => (p.defaults.start = -1),
     (p) => (p.objects[0].pins[0].x = 100),
   ]) {
@@ -174,7 +198,10 @@ test("版本号是三段式，可比较并识别早期整数版本", () => {
 });
 
 test("旧版本项目自动升级，不兼容版本被拒绝", () => {
-  const current = demoProject();
+  const current = newProject(),
+    example = demoProject();
+  current.objects = example.objects;
+  current.reference = example.reference;
   assert.equal(current.version, FORMAT_VERSION);
   assert.deepEqual(current.meta, {
     app: FORMAT,
@@ -283,26 +310,55 @@ const parseCSVRow = (line) => {
   out.push(value);
   return out;
 };
-test("CSV 清单包含全部对象、线长，并处理公式与引号", () => {
+test("CSV 清单保留元件、贴片与跳线裁线信息，排除锡线并处理公式与引号", () => {
   const p = demoProject();
-  p.objects.at(-1).name = '=HYPERLINK("x")';
+  const wire = p.objects.find((o) => o.type === "wire");
+  wire.name = '=HYPERLINK("x")';
+  for (const [kind, name, x] of [
+    ["resistor", "贴片 R4", 1],
+    ["capacitor", "贴片 C3", 2],
+  ])
+    p.objects.push({
+      id: kind,
+      type: "component",
+      mounting: "smd",
+      kind,
+      name,
+      x,
+      y: 6,
+      rotation: 0,
+      pins: regularPins("single", 2),
+    });
   const csv = objectsCSV(p);
   assert.ok(csv.startsWith("\uFEFF"));
   assert.ok(csv.includes('"\'=HYPERLINK(""x"")"'));
-  assert.ok(csv.includes(cutLength(p.objects.at(-1)).toFixed(1)));
+  assert.ok(csv.includes(cutLength(wire).toFixed(1)));
   const rows = csv.slice(1).split("\r\n").map(parseCSVRow);
-  assert.equal(rows.length, p.objects.length + 1); // 表头 + 每个对象一行
-  const [u1, t1] = [rows[1], rows.find((r) => r[0] === "T1")];
-  assert.deepEqual(u1.slice(0, 4), ["U1", "元件", "正面 · 元件面", "H5"]);
-  assert.equal(u1[5], "0"); // 旋转
-  assert.equal(u1[6], "8"); // 引脚数
-  assert.ok(u1[7].startsWith("H5=VCC; H6=IN1"));
-  assert.deepEqual(t1.slice(0, 4), ["T1", "锡线", "背面 · 焊盘面", "C4"]);
-  assert.equal(t1[8], "15.2");
-  const w1 = rows.find((r) => r[0] === "W1");
-  assert.deepEqual(w1.slice(1, 4), ["跳线", "正面 · 元件面", "K6"]);
+  assert.equal(rows.length, 14); // 表头 + 9 个元件 + 2 根跳线 + 2 个贴片
+  const exportedNames = new Set(rows.slice(1).map((r) => r[0]));
+  for (const solder of p.objects.filter((o) => o.type === "solder"))
+    assert.equal(exportedNames.has(solder.name), false);
+  assert.ok(rows.every((r) => r[1] !== "锡线"));
+  const ne555 = rows[1];
+  assert.deepEqual(ne555.slice(0, 4), ["NE555", "元件", "正面 · 元件面", "D4"]);
+  assert.equal(ne555[5], "0"); // 旋转
+  assert.equal(ne555[6], "8"); // 引脚数
+  assert.ok(ne555[7].startsWith("D4=GND; D5=TRIG"));
+  const w1 = rows.find((r) => r[0] === "'" + wire.name);
+  assert.deepEqual(w1.slice(1, 4), ["跳线", "正面 · 元件面", "E7"]);
   assert.equal(w1[7], "直连 · 2 个路径点");
-  assert.equal(w1[11], cutLength(p.objects.find((o) => o.name === "W1")).toFixed(1));
+  assert.equal(w1[11], cutLength(wire).toFixed(1));
+  const w2 = rows.find((r) => r[0] === "W2");
+  assert.equal(w2[7], "直角 · 3 个路径点");
+  assert.equal(w2[11], "41.6");
+  assert.deepEqual(
+    rows.find((r) => r[0] === "贴片 R4").slice(1, 5),
+    ["贴片电阻", "背面 · 焊盘面", "B7", "C7"],
+  );
+  assert.deepEqual(
+    rows.find((r) => r[0] === "贴片 C3").slice(1, 5),
+    ["贴片电容", "背面 · 焊盘面", "C7", "D7"],
+  );
 });
 
 test("自定义引脚组的基准孔始终可保存并导入", () => {

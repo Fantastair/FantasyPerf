@@ -503,7 +503,7 @@ function closeDialog() {
 function projectDialog(demo = false) {
   dialog(
     demo ? "打开布线示例" : "新建洞洞板",
-    `${project.objects.length ? '<p class="muted">当前设计会被替换。可以撤销恢复，建议先导出项目留存。</p>' : ""}${demo ? '<div class="info-box">20 × 15 孔，包含双排八脚元件、两个排针、分支锡线与两种跳线。</div>' : `${field("new-name", "项目名称", "未命名项目")}<div class="field-grid">${numberField("new-cols", "列数", 30, 2, 100)}${numberField("new-rows", "行数", 20, 2, 100)}</div>`}<p class="form-error" id="dialog-error"></p>`,
+    `${project.objects.length ? '<p class="muted">当前设计会被替换。可以撤销恢复，建议先导出项目留存。</p>' : ""}${demo ? '<div class="info-box">10 × 8 孔，已验证的 555 定时器 LED 多谐振荡器，含完整布局、布线及原理图参考。</div>' : `${field("new-name", "项目名称", "未命名项目")}<div class="field-grid">${numberField("new-cols", "列数", 30, 2, 100)}${numberField("new-rows", "行数", 20, 2, 100)}</div>`}<p class="form-error" id="dialog-error"></p>`,
     `<button data-close>取消</button><button id="create-project" class="primary">${demo ? "打开示例" : "创建洞洞板"}</button>`,
   );
   $("#create-project").onclick = () => {
@@ -866,7 +866,7 @@ function saveTemplates() {
 function exportDialog() {
   dialog(
     "导出设计",
-    `<p class="muted">项目文件保留全部可编辑数据；图片适合照图焊接。</p><div class="export-options"><button data-export="project">完整项目 <small>JSON · 格式 v${FORMAT_VERSION} · 生成工具 ${APP_VERSION}</small></button><button data-export="front">元件面 PNG <small>正面 · 元件与跳线</small></button><button data-export="back">焊盘面 PNG <small>背面 · 水平镜像，保留实际孔位编号</small></button><button data-export="split">并排 PNG <small>两面同步对照</small></button><button data-export="csv">全部元件 CSV 清单 <small>元件、引脚、跳线、锡线与裁线长度</small></button></div>`,
+    `<p class="muted">项目文件保留全部可编辑数据；图片适合照图焊接。</p><div class="export-options"><button data-export="project">完整项目 <small>JSON · 格式 v${FORMAT_VERSION} · 生成工具 ${APP_VERSION}</small></button><button data-export="front">元件面 PNG <small>正面 · 元件与跳线</small></button><button data-export="back">焊盘面 PNG <small>背面 · 水平镜像，保留实际孔位编号</small></button><button data-export="split">并排 PNG <small>两面同步对照</small></button><button data-export="csv">全部元件 CSV 清单 <small>元件、引脚、跳线与裁线长度</small></button></div>`,
   );
   $$("[data-export]").forEach(
     (b) =>
