@@ -14,26 +14,37 @@ SHA = "a" * 40
 
 
 class DeploymentTests(unittest.TestCase):
-    def eligible(self, event="push", run_status="success", job_status="success", path="ci.yml@refs/heads/main"):
-        run = dict(id=1, head_sha=SHA, event=event, head_branch="main", path=path, status=run_status)
-        job = dict(name="verify", head_sha=SHA, status=job_status)
+    def eligible(self, event="push", run_status="completed", run_conclusion="success",
+                 job_status="success", path="ci.yml@refs/heads/main"):
+        run = dict(id=1, head_sha=SHA, event=event, head_branch="main", path=path,
+                   status=run_status, conclusion=run_conclusion)
+        job = dict(name="verify", head_sha=SHA, status="completed", conclusion=job_status)
         def get(url):
             return {"jobs": [job]} if url.endswith("/jobs") else {"workflow_runs": [run]}
         with patch.object(publish, "get", side_effect=get):
             return publish.eligible(SHA)
 
-    def test_only_successful_main_push_can_publish(self):
+    def test_only_verified_main_push_can_publish(self):
         self.assertTrue(self.eligible())
+        # deploy job 就在这条 push 运行内部触发发布，此时运行仍在进行。
+        self.assertTrue(self.eligible(run_status="in_progress", run_conclusion=None))
+        self.assertTrue(self.eligible(run_status="running", run_conclusion=None))
         self.assertFalse(self.eligible(event="pull_request"))
-        self.assertFalse(self.eligible(run_status="failure"))
+        self.assertFalse(self.eligible(run_conclusion="failure"))
+        self.assertFalse(self.eligible(run_conclusion="cancelled"))
         self.assertFalse(self.eligible(job_status="skipped"))
+        self.assertFalse(self.eligible(run_status="in_progress", run_conclusion=None,
+                                       job_status="in_progress"))
         self.assertFalse(self.eligible(path="other.yml@refs/heads/main"))
 
     def test_new_failed_run_overrides_old_success(self):
         runs = [dict(id=i, head_sha=SHA, event="push", head_branch="main",
-                     path="ci.yml@refs/heads/main", status=status)
-                for i, status in [(1, "success"), (2, "failure")]]
-        with patch.object(publish, "get", return_value={"workflow_runs": runs}):
+                     path="ci.yml@refs/heads/main", status="completed", conclusion=conclusion)
+                for i, conclusion in [(1, "success"), (2, "failure")]]
+        job = dict(name="verify", head_sha=SHA, status="completed", conclusion="success")
+        def get(url):
+            return {"jobs": [job]} if url.endswith("/jobs") else {"workflow_runs": runs}
+        with patch.object(publish, "get", side_effect=get):
             self.assertFalse(publish.eligible(SHA))
 
     def archive(self, extra=None):

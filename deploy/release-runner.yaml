@@ -1,0 +1,19 @@
+# 宿主机模式 runner：只用来触发发布与 GitHub 同步，不运行仓库代码。
+# 安装到 /etc/fantasyperf/release-runner.yaml，由 fantasyperf-release-runner.service 使用。
+log:
+  level: info
+runner:
+  file: /var/lib/fantasyperf-release/.runner
+  capacity: 1
+  timeout: 15m
+  # host 标签表示任务直接在宿主机上以 runner 用户身份执行，不使用容器。
+  labels:
+    - fantasyperf-release:host
+cache:
+  enabled: false
+container:
+  # 宿主机任务不使用容器；这里只是让 daemon 不去挂载 docker socket。
+  docker_host: '-'
+  workdir_parent: var/lib/fantasyperf-release/work
+  valid_volumes: []
+  force_pull: false

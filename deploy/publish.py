@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Publish the latest main only after its own Gitea push CI succeeds.
 
-Runs under a dedicated unprivileged systemd user. Never executes repository code.
-The static build contract is index.html + src/ + LICENSE (scripts/build.mjs).
+Runs under a dedicated unprivileged systemd user, triggered by the deploy job of
+.gitea/workflows/ci.yml (needs: verify, push to main only). Never executes
+repository code. The static build contract is index.html + src/ + LICENSE
+(scripts/build.mjs).
 """
 import fcntl
 import io
@@ -40,7 +42,16 @@ def head():
     return sha
 
 
+# 任务被 deploy job 在运行内部触发时，这条 push 运行本身仍在进行中。
+UNFINISHED = ("in_progress", "running", "waiting", "queued", "pending")
+
+
 def eligible(sha):
+    """返回 True 表示该提交的 verify 已通过，可以发布。
+
+    只认 main 的 push 运行；运行已结束但不是 success（失败、取消）时一律不放行，
+    仍在进行时以 verify job 的结果为准——deploy job 就在这条运行内部。
+    """
     runs = get(f"actions/runs?event=push&branch=main&head_sha={sha}&limit=50")
     runs = [r for r in runs["workflow_runs"] if
             r["head_sha"] == sha and r["event"] == "push" and
@@ -49,7 +60,8 @@ def eligible(sha):
     if not runs:
         return False
     run = max(runs, key=lambda r: r["id"])
-    if (run.get("conclusion") or run.get("status")) != "success":
+    state = run.get("conclusion") or run.get("status")
+    if state != "success" and state not in UNFINISHED:
         return False
     jobs = get(f"actions/runs/{run['id']}/jobs")["jobs"]
     return any(j["name"] == "verify" and (j.get("conclusion") or j.get("status")) == "success"

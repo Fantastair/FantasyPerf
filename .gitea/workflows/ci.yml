@@ -27,3 +27,35 @@ jobs:
         run: npm run test:e2e
       - name: Build
         run: npm run build
+
+  # 发布与 GitHub 同步都由 Actions 驱动：验证通过后，在宿主机 runner 上触发已有的
+  # 加固 oneshot 单元，发布逻辑与凭据仍留在服务器。宿主机 job 不检出仓库、不执行
+  # 仓库代码（只有白名单里的 systemctl / journalctl），因此即使 PR 指定了这个
+  # runs-on 标签也拿不到部署能力：if 限定只有 push 到 main 才会执行。
+  deploy:
+    name: deploy
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: fantasyperf-release
+    timeout-minutes: 15
+    steps:
+      - name: Publish verified static build
+        run: |
+          status=0
+          sudo -n systemctl start fantasyperf-deploy.service || status=$?
+          sudo -n journalctl -u fantasyperf-deploy.service -n 40 --no-pager -o cat || true
+          exit $status
+
+  mirror:
+    name: mirror
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: fantasyperf-release
+    timeout-minutes: 15
+    steps:
+      - name: Sync GitHub mirror
+        run: |
+          status=0
+          sudo -n systemctl start fantasyperf-github-sync.service || status=$?
+          sudo -n journalctl -u fantasyperf-github-sync.service -n 40 --no-pager -o cat || true
+          exit $status

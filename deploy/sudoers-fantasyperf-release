@@ -1,0 +1,16 @@
+# FantasyPerf 发布触发白名单：只允许启动两个加固单元并读取它们的日志。
+# 命令必须与 .gitea/workflows/ci.yml 中 deploy / mirror job 的调用逐字一致；
+# 修改 workflow 时同步更新本文件，否则 sudo 会拒绝执行。
+#
+# 安装：sudo install -m 0440 deploy/sudoers-fantasyperf-release /etc/sudoers.d/fantasyperf-release
+# 校验：sudo -u fantasyperf-release sudo -n -l
+#   （希望看到上面四条命令，且不提示输入密码）
+#
+# 若更喜欢用 polkit 保留 runner 单元的 NoNewPrivileges=true，可改用
+# /etc/polkit-1/rules.d/ 下允许 org.freedesktop.systemd1.manage-units
+# 的规则来授权这两个单元，并把本文件替换掉。
+fantasyperf-release ALL=(root) NOPASSWD: \
+  /usr/bin/systemctl start fantasyperf-deploy.service, \
+  /usr/bin/systemctl start fantasyperf-github-sync.service, \
+  /usr/bin/journalctl -u fantasyperf-deploy.service -n 40 --no-pager -o cat, \
+  /usr/bin/journalctl -u fantasyperf-github-sync.service -n 40 --no-pager -o cat
