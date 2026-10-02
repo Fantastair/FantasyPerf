@@ -77,9 +77,6 @@
         <button data-tool="component" class="tool" title="放置元件 · C">
           <span>▦</span>元件<kbd>C</kbd>
         </button>
-        <button class="tool" data-action="library" title="公共元件库">
-          <span>▤</span>元件库
-        </button>
         <button data-tool="solder" class="tool" title="焊盘面锡线 · S">
           <span>⌁</span>锡线<kbd>S</kbd>
         </button>
@@ -185,6 +182,7 @@
       accept=".json,.fantasyperf,application/json"
       hidden
     />
+    <input type="file" id="component-file-input" accept=".json,application/json" hidden />
     <div id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="./src/app.js"></script>
   </body>

@@ -55,6 +55,7 @@ async function newBoard(page) {
 }
 async function addComponent(page, name, x, y, kind = "double", count = "8") {
   await page.locator('.tools [data-tool="component"]').click();
+  await page.locator("#library-custom").click();
   await page.locator("#component-name").fill(name);
   await page.locator("#pin-kind").selectOption(kind);
   await page.locator("#pin-count").fill(count);
@@ -206,12 +207,14 @@ test("完整验收：元件、标注、布线、镜像、编辑、撤销、保�
   expect({ ...p, meta: null }).toEqual({ ...snapshot, meta: null });
   expect(errors).toEqual([]);
 });
-test("模板、引脚标注拖动、独立移动与保护板尺寸", async ({ page }) => {
+test("元件文件复用、引脚标注拖动、独立移动与保护板尺寸", async ({ page }) => {
   await newBoard(page);
   await addComponent(page, "U1", 7, 4);
   await page.locator('[data-pin="0"]').fill("VCC");
   await page.locator('[data-pin="0"]').press("Tab");
-  await page.locator('[data-action="save-template"]').click();
+  const pending = page.waitForEvent("download");
+  await page.locator('[data-action="export-component"]').click();
+  const componentPath = await (await pending).path();
   const start = await hole(page, 7, 4),
     left = await hole(page, 6, 4);
   await page.mouse.move(start.x - (start.x - left.x) * 0.65, start.y);
@@ -234,9 +237,8 @@ test("模板、引脚标注拖动、独立移动与保护板尺寸", async ({ pa
   await page.locator("#cols").fill("4");
   await page.locator("#cols").press("Tab");
   await expect(page.locator("#cols")).toHaveValue("20");
-  await page.locator('[data-action="templates"]').click();
-  await page.locator('[data-template="0"]').click();
-  await page.locator("#place-component").click();
+  await page.locator("#component-file-input").setInputFiles(componentPath);
+  await page.locator('[data-imported="0"]').click();
   await clickHole(page, 13, 4);
   p = await saved(page);
   expect(p.objects).toHaveLength(2);
@@ -252,6 +254,7 @@ test("取消绘制不落盘，自定义元件可建立并重开", async ({ page 
   let p = await saved(page);
   expect(p.objects).toHaveLength(0);
   await page.locator('.tools [data-tool="component"]').click();
+  await page.locator("#library-custom").click();
   await page.locator("#pin-kind").selectOption("custom");
   await page.locator('[data-grid="5"]').click();
   await page.locator("#place-component").click();
@@ -720,7 +723,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
 });
 test("公共元件库搜索、分类、直接放置及实例独立", async ({ page }) => {
   await newBoard(page);
-  await page.locator('[data-action="library"]').click();
+  await page.locator('.tools [data-tool="component"]').click();
   await page.locator("#library-search").fill("单排 4");
   await expect(page.locator("[data-library]")).toHaveCount(1);
   await page.locator('[data-library="header-4"]').click();
@@ -730,14 +733,14 @@ test("公共元件库搜索、分类、直接放置及实例独立", async ({ pa
   expect(p.objects[0].pins).toHaveLength(4);
   await page.locator('[data-pin="0"]').fill("VCC");
   await page.locator('[data-pin="0"]').press("Tab");
-  await page.locator('[data-action="library"]').click();
+  await page.locator('.tools [data-tool="component"]').click();
   await page.locator('[data-library="header-4"]').click();
   await clickHole(page, 3, 6);
   p = await saved(page);
   expect(p.objects[1].pins[0].label).toBe("1");
   expect(p.objects[1].name).toBe("J2");
-  await page.locator('[data-action="library"]').click();
-  await page.locator("#library-category").selectOption("贴片");
+  await page.locator('.tools [data-tool="component"]').click();
+  await page.locator("#library-category").selectOption("两焊盘 · 贴片");
   await expect(page.locator("[data-library]")).toHaveCount(2);
   await page.locator('[data-library="smd-resistor"]').click();
   await clickHole(page, 8.5, 5, "back");
@@ -865,4 +868,105 @@ test("手机只读打开、详情、平移缩放及编辑隔离", async ({
   ).toBeNull();
   expect(errors).toEqual([]);
   await context.close();
+});
+
+test("统一元件入口、常用排布与清除网站数据后的文件恢复", async ({ page }) => {
+  const { readFile } = await import("node:fs/promises");
+  await newBoard(page);
+  await expect(page.locator('[data-action="library"]')).toHaveCount(0);
+  await page.keyboard.press("c");
+  await expect(page.locator("#modal h2")).toHaveText("元件");
+  await page.keyboard.press("Escape");
+  await expect(page.locator('.tools [data-tool="select"]')).toHaveClass(/active/);
+  await page.keyboard.press("c");
+  await page.locator("#library-category").selectOption("双排 · 排距 3 孔");
+  await page.locator("#library-search").fill("运放");
+  await expect(page.locator("[data-library]")).toHaveCount(3);
+  await page.screenshot({ path: "artifacts/component-library.png" });
+  await page.locator("#library-search").fill("ne555");
+  await page.locator('[data-library="ne555"]').click();
+  await clickHole(page, 3, 3);
+  const before = (await saved(page)).objects[0];
+  const pending = page.waitForEvent("download");
+  await page.locator('[data-action="export-component"]').click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe("U1.fantasyperf-components.json");
+  const buffer = await readFile(await download.path());
+  expect(JSON.parse(buffer).components[0].pins).toEqual(before.pins);
+  expect(await page.evaluate(() => localStorage.getItem("fantasyperf.templates.v1"))).toBeNull();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.locator("#component-file-input").setInputFiles({ name: "恢复.json", mimeType: "application/json", buffer });
+  await page.locator('[data-imported="0"]').click();
+  await clickHole(page, 2, 2, "front", 30, 20);
+  expect((await saved(page)).objects[0].pins).toEqual(before.pins);
+  const stored = await saved(page);
+  await page.locator("#component-file-input").setInputFiles({ name: "损坏.json", mimeType: "application/json", buffer: Buffer.from('{"format":"wrong"}') });
+  await expect(page.locator("#toast")).toContainText("元件导入失败");
+  expect(await saved(page)).toEqual(stored);
+});
+
+test("旧模板可导出迁移，贴片文件恢复后仍在焊盘面", async ({ page }) => {
+  const { readFile } = await import("node:fs/promises");
+  const { regularPins } = await import("../../src/core.js");
+  const legacy = [{ name: "旧排针", pins: regularPins("single", 3) }];
+  await newBoard(page);
+  await page.evaluate((items) => localStorage.setItem("fantasyperf.templates.v1", JSON.stringify(items)), legacy);
+  await page.reload();
+  await page.locator('.tools [data-tool="component"]').click();
+  await expect(page.locator("#modal")).toContainText("发现 1 个旧模板");
+  const pending = page.waitForEvent("download");
+  await page.locator("#export-legacy").click();
+  const exported = JSON.parse(await readFile(await (await pending).path(), "utf8"));
+  expect(exported.components).toEqual(legacy);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("fantasyperf.templates.v1")))).toEqual(legacy);
+  await page.locator('[data-library="smd-capacitor"]').click();
+  await clickHole(page, 4.5, 4, "back");
+  await saved(page);
+  await page.locator('[data-action="rotate"]').click();
+  await saved(page);
+  const smdPending = page.waitForEvent("download");
+  await page.locator('[data-action="export-component"]').click();
+  const smdPath = await (await smdPending).path();
+  await page.locator("#component-file-input").setInputFiles(smdPath);
+  await page.locator('[data-imported="0"]').click();
+  await expect(page.locator('[data-view="back"]')).toHaveClass("active");
+  await clickHole(page, 8.5, 4, "back");
+  expect((await saved(page)).objects[1]).toMatchObject({ mounting: "smd", kind: "capacitor", rotation: 0 });
+});
+
+test("元件旧文件自动升级，补丁兼容且未来版本不覆盖已导入元件", async ({ page }) => {
+  const { COMPONENT_VERSION, createComponentFile } = await import("../../src/component-files.js");
+  const { regularPins } = await import("../../src/core.js");
+  const { readFile } = await import("node:fs/promises");
+  await newBoard(page);
+  const item = { name: "旧元件", pins: regularPins("double", 8, 1, 3) };
+  const open = (file) => page.locator("#component-file-input").setInputFiles({
+    name: "元件.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(file)),
+  });
+  for (const version of [1, "1.0.9"]) {
+    await open({ format: "FantasyPerfComponents", version, components: [item] });
+    await expect(page.locator("#toast")).toContainText(`升级到 v${COMPONENT_VERSION}`);
+    await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");
+  }
+  const patch = { ...createComponentFile([item]), version: "1.1.9" };
+  await open(patch);
+  await expect(page.locator("#toast")).toContainText("已导入 1 个元件");
+  await expect(page.locator("#toast")).not.toContainText("升级到");
+  const before = await saved(page);
+  for (const [version, message] of [["1.2.0", "升级工具"], ["2.0.0", "大版本"]]) {
+    await open({ ...patch, version, components: [{ ...item, name: "不应导入" }] });
+    await expect(page.locator("#toast")).toContainText(message);
+    await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");
+    expect(await saved(page)).toEqual(before);
+  }
+  await page.locator('[data-imported="0"]').click();
+  await clickHole(page, 3, 3);
+  expect((await saved(page)).objects[0].pins).toEqual(item.pins);
+  const pending = page.waitForEvent("download");
+  await page.locator('[data-action="export-component"]').click();
+  const exported = JSON.parse(await readFile(await (await pending).path(), "utf8"));
+  expect(exported.version).toBe(COMPONENT_VERSION);
+  expect(exported.components).toEqual([item]);
+  expect(exported.meta.appVersion).toBeTruthy();
 });

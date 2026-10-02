@@ -1,3 +1,7 @@
+import {
+  COMPONENT_VERSION, parseComponentVersion,
+  validateComponent, parseComponentFile, createComponentFile,
+} from "./component-files.js";
 import { COMPONENT_LIBRARY, instantiateLibraryItem } from "./library.js";
 import { installViewerGestures } from "./viewer.js";
 import { createReferenceLayer } from "./reference.js";
@@ -78,7 +82,7 @@ const mobileMedia = matchMedia(
 let readOnly = viewerQuery || mobileMedia.matches;
 let desktopSession = null;
 document.documentElement.dataset.readonly = String(readOnly);
-let templates = [];
+let templates = [], importedComponents = [];
 try {
   const raw = localStorage.getItem(STORE);
   if (raw) {
@@ -96,9 +100,12 @@ try {
   );
 }
 try {
-  templates = JSON.parse(localStorage.getItem(TEMPLATES) || "[]")
-    .filter((t) => t && typeof t.name === "string" && Array.isArray(t.pins))
-    .slice(0, 100);
+  const legacy = JSON.parse(localStorage.getItem(TEMPLATES) || "[]");
+  if (Array.isArray(legacy)) {
+    for (const raw of legacy.slice(0, 100)) {
+      try { templates.push(validateComponent(raw)); } catch {}
+    }
+  }
 } catch {}
 const state = {
   view: "front",
@@ -207,7 +214,7 @@ function setTool(tool) {
   state.selected.clear();
   if ((tool === "wire" || tool === "component") && state.view !== "split")
     state.view = "front";
-  if (tool === "component") componentDialog();
+  if (tool === "component") libraryDialog();
   refresh();
 }
 function setView(view) {
@@ -394,7 +401,7 @@ function renderInspector() {
     return;
   }
   if (!selected.length) {
-    root.innerHTML = `<h2 class="section-heading">洞洞板 <small>独立焊盘</small></h2><div class="field-grid">${numberField("cols", "列数", project.board.cols, 2, 100)}${numberField("rows", "行数", project.board.rows, 2, 100)}</div><div class="info-box">${((project.board.cols - 1) * PITCH).toFixed(2)} × ${((project.board.rows - 1) * PITCH).toFixed(2)} mm<br>首末孔中心距 · 固定孔距 2.54 mm</div><hr class="rule"><h2 class="section-heading">视图显示</h2><label class="check"><input id="ghost" type="checkbox" ${state.showGhost ? "checked" : ""}>淡显另一面内容</label><label class="check"><input id="labels" type="checkbox" ${state.showLabels ? "checked" : ""}>显示引脚标注</label><hr class="rule"><h2 class="section-heading">新跳线默认余量</h2><div class="field-grid">${numberField("default-start", "起点", project.defaults.start, 0, 1000, 0.1, "mm")}${numberField("default-end", "终点", project.defaults.end, 0, 1000, 0.1, "mm")}</div><p class="muted">仅应用于之后绘制的跳线，已绘制的跳线可单独修改。</p>${state.tool === "wire" ? `<h2 class="section-heading">跳线颜色</h2>${palette(state.wireColor)}` : ""}<hr class="rule"><div class="data-row"><span>元件 / 锡线 / 跳线</span><strong>${["component", "solder", "wire"].map((t) => project.objects.filter((o) => o.type === t).length).join(" / ")}</strong></div><button class="wide" data-action="templates">本地元件模板</button>`;
+    root.innerHTML = `<h2 class="section-heading">洞洞板 <small>独立焊盘</small></h2><div class="field-grid">${numberField("cols", "列数", project.board.cols, 2, 100)}${numberField("rows", "行数", project.board.rows, 2, 100)}</div><div class="info-box">${((project.board.cols - 1) * PITCH).toFixed(2)} × ${((project.board.rows - 1) * PITCH).toFixed(2)} mm<br>首末孔中心距 · 固定孔距 2.54 mm</div><hr class="rule"><h2 class="section-heading">视图显示</h2><label class="check"><input id="ghost" type="checkbox" ${state.showGhost ? "checked" : ""}>淡显另一面内容</label><label class="check"><input id="labels" type="checkbox" ${state.showLabels ? "checked" : ""}>显示引脚标注</label><hr class="rule"><h2 class="section-heading">新跳线默认余量</h2><div class="field-grid">${numberField("default-start", "起点", project.defaults.start, 0, 1000, 0.1, "mm")}${numberField("default-end", "终点", project.defaults.end, 0, 1000, 0.1, "mm")}</div><p class="muted">仅应用于之后绘制的跳线，已绘制的跳线可单独修改。</p>${state.tool === "wire" ? `<h2 class="section-heading">跳线颜色</h2>${palette(state.wireColor)}` : ""}<hr class="rule"><div class="data-row"><span>元件 / 锡线 / 跳线</span><strong>${["component", "solder", "wire"].map((t) => project.objects.filter((o) => o.type === t).length).join(" / ")}</strong></div>`;
     for (const key of ["cols", "rows"])
       bindNumber("#" + key, (n) => {
         const board = { ...project.board, [key]: n };
@@ -432,12 +439,12 @@ function renderInspector() {
     const pads = objectPoints(o);
     root.insertAdjacentHTML(
       "beforeend",
-      `<div class="info-box">0603 / 0805 贴片电阻、电容示意。跨接两个相邻焊盘，不区分封装尺寸。</div><div class="data-row"><span>焊盘位置</span><strong>${holeName(pads[0])} ↔ ${holeName(pads[1])}</strong></div><div class="data-row"><span>旋转</span><strong>${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑元件</button></div><p class="muted">拖动移动 · R 旋转；可在名称中填写阻值或容值。</p>`,
+      `<div class="info-box">0603 / 0805 贴片电阻、电容示意。跨接两个相邻焊盘，不区分封装尺寸。</div><div class="data-row"><span>焊盘位置</span><strong>${holeName(pads[0])} ↔ ${holeName(pads[1])}</strong></div><div class="data-row"><span>旋转</span><strong>${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑元件</button></div><p class="muted">拖动移动 · R 旋转；可在名称中填写阻值或容值。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
     );
   } else if (o.type === "component") {
     root.insertAdjacentHTML(
       "beforeend",
-      `<div class="field-grid">${numberField("object-x", "列（从 1 起）", o.x + 1, 1, project.board.cols)}${numberField("object-y", "行", o.y + 1, 1, project.board.rows)}</div><div class="data-row"><span>基准孔 / 旋转</span><strong>${holeName(o)} / ${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑引脚布局</button></div><hr class="rule"><h2 class="section-heading">引脚标注 <small>${o.pins.length} 脚</small></h2><div class="pin-list">${o.pins.map((p, i) => `<div class="pin-row"><span>${holeName(pinPosition(o, p))}</span><input aria-label="引脚 ${i + 1} 标注" data-pin="${i}" maxlength="100" value="${esc(p.label)}"></div>`).join("")}</div><p class="muted">拖动画布中的标注可调整文字位置。</p><button class="wide" data-action="save-template">保存为本地模板</button>`,
+      `<div class="field-grid">${numberField("object-x", "列（从 1 起）", o.x + 1, 1, project.board.cols)}${numberField("object-y", "行", o.y + 1, 1, project.board.rows)}</div><div class="data-row"><span>基准孔 / 旋转</span><strong>${holeName(o)} / ${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑引脚布局</button></div><hr class="rule"><h2 class="section-heading">引脚标注 <small>${o.pins.length} 脚</small></h2><div class="pin-list">${o.pins.map((p, i) => `<div class="pin-row"><span>${holeName(pinPosition(o, p))}</span><input aria-label="引脚 ${i + 1} 标注" data-pin="${i}" maxlength="100" value="${esc(p.label)}"></div>`).join("")}</div><p class="muted">拖动画布中的标注可调整文字位置。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
     );
     for (const key of ["x", "y"])
       bindNumber("#object-" + key, (n) => {
@@ -494,6 +501,11 @@ function dialog(title, body, footer = "") {
   cancel();
   $("#modal-content").innerHTML =
     `<div class="modal-head"><h2>${title}</h2><button data-close aria-label="关闭">×</button></div><div class="modal-body">${body}</div>${footer ? `<div class="modal-foot">${footer}</div>` : ""}`;
+  modal.oncancel = () => {
+    if (state.tool === "component") state.tool = "select";
+    state.placement = null;
+    refresh();
+  };
   if (!modal.open) modal.showModal();
 }
 function closeDialog() {
@@ -578,55 +590,86 @@ function editComponent(o) {
   if (o.mounting === "smd") smdDialog(o);
   else componentDialog(o);
 }
+function pinPreview(pins) {
+  const xs = pins.map((p) => p.x), ys = pins.map((p) => p.y);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const w = Math.max(...xs) - minX, h = Math.max(...ys) - minY;
+  const scale = Math.min(14, 140 / Math.max(w, 1), 48 / Math.max(h, 1));
+  return `<svg class="pin-preview" viewBox="0 0 168 72" aria-hidden="true">${pins.map((p) => `<circle cx="${84 + (p.x - minX - w / 2) * scale}" cy="${36 + (p.y - minY - h / 2) * scale}" r="3" />`).join("")}</svg>`;
+}
+function placeLibraryComponent(item, name) {
+  const o = instantiateLibraryItem(item, name);
+  const b = bounds([o]);
+  o.x = Math.max(0, -b.minX);
+  o.y = Math.max(0, -b.minY);
+  if (!fits([o], project.board)) {
+    toast("当前板尺寸放不下该元件，请先增大板尺寸。");
+    return;
+  }
+  closeDialog();
+  state.referenceSelected = false;
+  state.selected.clear();
+  state.tool = "component";
+  state.placement = o;
+  if (state.view !== "split") state.view = objectFace(o);
+  refresh();
+}
+function exportComponents(items, name) {
+  try {
+    download(JSON.stringify(createComponentFile(items), null, 2), "application/json",
+      ".fantasyperf-components.json", name);
+  } catch (error) { toast(`元件导出失败：${error.message}`); }
+}
 function libraryDialog() {
   if (readOnly) return;
+  const categories = [...new Set(COMPONENT_LIBRARY.map((item) => item.category))];
   dialog(
-    "公共元件库",
-    `<p class="muted">通用引脚组，放置后可独立修改。请按实物核对引脚顺序。</p><div class="field"><label for="library-search">搜索元件</label><input id="library-search" type="search" placeholder="排针、双排、贴片…"></div><div class="field"><label for="library-category">分类</label><select id="library-category"><option value="">全部</option><option>排针</option><option>双排引脚组</option><option>贴片</option></select></div><div id="library-results" class="library-results"></div>`,
-    '<button data-close>关闭</button><button id="library-custom">自定义元件</button><button id="library-personal">个人模板</button>',
+    "元件",
+    `<p class="muted">按引脚排布选择，点击即可放置。预设只提供孔位与数字编号，功能标注可在放置后修改。</p><div class="field-grid"><div class="field"><label for="library-search">搜索元件</label><input id="library-search" type="search" placeholder="NE555、8 脚、运放、单排…"></div><div class="field"><label for="library-category">引脚排布</label><select id="library-category"><option value="">全部排布</option>${categories.map((category) => `<option>${esc(category)}</option>`).join("")}</select></div></div><div id="library-results" class="library-results"></div><div id="imported-components"></div>${templates.length ? `<section class="component-files"><h3>旧版浏览器模板</h3><p class="muted">发现 ${templates.length} 个旧模板。清除网站数据会丢失，请导出文件留存。</p><button id="export-legacy">导出全部旧模板</button><div class="template-list">${templates.map((t, i) => `<div class="template-row"><button data-legacy="${i}">${esc(t.name)} · ${t.pins.length} 脚 · 放置</button><button data-export-legacy="${i}">导出</button></div>`).join("")}</div></section>` : ""}<p class="muted component-file-note">选中板上元件可导出文件，之后在此导入复用。文件由你保管；导入列表仅在本次打开页面期间保留。</p>`,
+    '<button data-close>关闭</button><button id="import-components">导入元件</button><button id="library-custom" class="primary">自定义元件</button>',
   );
   const render = () => {
-    const query = $("#library-search").value.trim().toLowerCase(),
+    const query = $("#library-search").value.trim().toLowerCase().replace(/\s/g, ""),
       category = $("#library-category").value;
     const items = COMPONENT_LIBRARY.filter(
-      (item) =>
-        (!category || item.category === category) &&
-        `${item.title} ${item.description}`.toLowerCase().includes(query),
+      (item) => (!category || item.category === category) &&
+        `${item.title} ${item.description} ${item.keywords ?? ""}`.toLowerCase().replace(/\s/g, "").includes(query),
     );
     $("#library-results").innerHTML = items.length
-      ? items
-          .map(
-            (item) =>
-              `<button class="library-item" data-library="${item.id}"><strong>${esc(item.title)}</strong><small>${esc(item.description)}</small><span>放置 →</span></button>`,
-          )
-          .join("")
+      ? items.map((item) => `<button class="library-item" data-library="${item.id}">${pinPreview(item.pins)}<strong>${esc(item.title)}</strong><small>${esc(item.description)}</small><span>放置 →</span></button>`).join("")
       : '<p class="empty-list">没有匹配项，可创建自定义元件。</p>';
-    $$("[data-library]").forEach(
-      (button) =>
-        (button.onclick = () => {
-          const item = COMPONENT_LIBRARY.find(
-            (item) => item.id === button.dataset.library,
-          );
-          const o = instantiateLibraryItem(item, nameNext(item.prefix));
-          if (!fits([o], project.board)) {
-            toast("当前板尺寸放不下该元件，请先增大板尺寸。");
-            return;
-          }
-          closeDialog();
-          state.referenceSelected = false;
-          state.selected.clear();
-          state.tool = "component";
-          state.placement = o;
-          if (state.view !== "split") state.view = objectFace(o);
-          refresh();
-        }),
-    );
+    $$("[data-library]").forEach((button) => button.onclick = () => {
+      const item = COMPONENT_LIBRARY.find((item) => item.id === button.dataset.library);
+      placeLibraryComponent(item, nameNext(item.prefix));
+    });
   };
   $("#library-search").oninput = render;
   $("#library-category").onchange = render;
   $("#library-custom").onclick = () => componentDialog();
-  $("#library-personal").onclick = templatesDialog;
+  $("#import-components").onclick = () => $("#component-file-input").click();
+  if (templates.length) {
+    $("#export-legacy").onclick = () => exportComponents(templates, "旧版元件模板");
+    $$("[data-legacy]").forEach((b) => b.onclick = () => {
+      const item = templates[+b.dataset.legacy];
+      placeLibraryComponent(item, item.name);
+    });
+    $$("[data-export-legacy]").forEach((b) => b.onclick = () => {
+      const item = templates[+b.dataset.exportLegacy];
+      exportComponents([item], item.name);
+    });
+  }
+  renderImportedComponents();
   render();
+}
+function renderImportedComponents() {
+  const root = $("#imported-components");
+  if (!root) return;
+  root.innerHTML = importedComponents.length
+    ? `<section class="component-files"><h3>已导入 · 本次会话</h3>${importedComponents.map((item, i) => `<button class="wide" data-imported="${i}">${esc(item.name)} · ${item.pins.length} 脚 · 放置</button>`).join("")}</section>` : "";
+  root.querySelectorAll("[data-imported]").forEach((b) => b.onclick = () => {
+    const item = importedComponents[+b.dataset.imported];
+    placeLibraryComponent(item, item.name);
+  });
 }
 function renderViewerInspector() {
   const root = $("#inspector-content"),
@@ -682,15 +725,15 @@ function viewerReference() {
   );
   $(".viewer-reference img").src = project.reference.dataUrl;
 }
-function componentDialog(existing = null, template = null) {
+function componentDialog(existing = null) {
   let pins = clone(
-    existing?.pins ?? template?.pins ?? regularPins("double", 8, 1, 3),
+    existing?.pins ?? regularPins("double", 8, 1, 3),
   );
   let custom = false;
   dialog(
-    existing ? "编辑元件" : "放置元件",
-    `${field("component-name", "元件名称", existing?.name ?? template?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排间距（孔）", 1, 1, 20)}${numberField("pin-gap", "两排间距（孔）", 3, 1, 30)}</div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
-    `<button id="browse-library">公共元件库</button><button id="browse-templates">本地模板</button><button data-close>取消</button><button id="place-component" class="primary">${existing ? "保存修改" : "放到板上"}</button>`,
+    existing ? "编辑元件" : "自定义元件",
+    `${field("component-name", "元件名称", existing?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排间距（孔）", 1, 1, 20)}${numberField("pin-gap", "两排间距（孔）", 3, 1, 30)}</div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
+    `${existing ? "" : '<button id="back-components">返回元件</button>'}<button data-close>取消</button><button id="place-component" class="primary">${existing ? "保存修改" : "放到板上"}</button>`,
   );
   const update = () => {
     $("#pin-labels").value = pins.map((p) => p.label).join("\n");
@@ -756,7 +799,7 @@ function componentDialog(existing = null, template = null) {
     }
     update();
   };
-  if (existing || template) {
+  if (existing) {
     $("#pin-kind").value = "custom";
     custom = true;
     $("#custom-grid-wrap").hidden = false;
@@ -768,8 +811,7 @@ function componentDialog(existing = null, template = null) {
     (s) => ($(s).onchange = generate),
   );
   update();
-  $("#browse-library").onclick = libraryDialog;
-  $("#browse-templates").onclick = () => templatesDialog();
+  if (!existing) $("#back-components").onclick = libraryDialog;
   $("#place-component").onclick = () => {
     syncLabels();
     if (!pins.length) {
@@ -821,47 +863,6 @@ function componentDialog(existing = null, template = null) {
       refresh();
     }
   };
-  modal.oncancel = () => {
-    state.tool = "select";
-    state.placement = null;
-    refresh();
-  };
-}
-function templatesDialog() {
-  dialog(
-    "本地元件模板",
-    templates.length
-      ? templates
-          .map(
-            (t, i) =>
-              `<div class="template-row"><button data-template="${i}">${esc(t.name)} <small> · ${t.pins.length} 脚</small></button><button data-remove-template="${i}" aria-label="删除模板 ${esc(t.name)}">×</button></div>`,
-          )
-          .join("")
-      : '<div class="empty-list">还没有模板。<br>选中元件后点击「保存为本地模板」。</div>',
-    '<button data-close>关闭</button><button id="new-component" class="primary">新建元件</button>',
-  );
-  $("#new-component").onclick = () => componentDialog();
-  $$("[data-template]").forEach(
-    (b) =>
-      (b.onclick = () => componentDialog(null, templates[+b.dataset.template])),
-  );
-  $$("[data-remove-template]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        templates.splice(+b.dataset.removeTemplate, 1);
-        saveTemplates();
-        templatesDialog();
-      }),
-  );
-}
-function saveTemplates() {
-  try {
-    localStorage.setItem(TEMPLATES, JSON.stringify(templates));
-    return true;
-  } catch {
-    toast("模板保存失败，浏览器存储不可用");
-    return false;
-  }
 }
 function exportDialog() {
   dialog(
@@ -903,13 +904,13 @@ function exportedProject() {
     },
   };
 }
-function download(data, type, suffix) {
+function download(data, type, suffix, name = project.name) {
   const blob = data instanceof Blob ? data : new Blob([data], { type });
   const url = URL.createObjectURL(blob),
     a = document.createElement("a");
   a.href = url;
   a.download =
-    (project.name.replace(/[\\/:*?"<>|]/g, "_") || "FantasyPerf") + suffix;
+    (name.replace(/[\\/:*?"<>|]/g, "_") || "FantasyPerf") + suffix;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast("导出文件已生成");
@@ -1048,7 +1049,6 @@ function undo(redo = false) {
   } else refresh();
 }
 const actions = {
-  library: libraryDialog,
   "viewer-demo": () => {
     project = demoProject();
     state.selected.clear();
@@ -1094,17 +1094,13 @@ const actions = {
     copy();
     paste();
   },
-  templates: templatesDialog,
   "edit-component": () => {
     const o = selectedObjects()[0];
     if (o?.type === "component") editComponent(o);
   },
-  "save-template": () => {
+  "export-component": () => {
     const o = selectedObjects()[0];
-    if (o?.type === "component") {
-      templates.push({ name: o.name, pins: clone(o.pins) });
-      if (saveTemplates()) toast("已保存本地元件模板");
-    }
+    if (o?.type === "component") exportComponents([o], o.name);
   },
   csv: () =>
     download(objectsCSV(project), "text/csv;charset=utf-8", "-元件清单.csv"),
@@ -1144,6 +1140,24 @@ document.addEventListener("click", (e) => {
 });
 $("#project-name").onchange = (e) =>
   commit(() => (project.name = e.target.value.trim() || "未命名项目"));
+$("#component-file-input").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file || readOnly) return;
+  if (file.size > 10 * 1024 * 1024) { toast("元件文件不能超过 10 MB"); return; }
+  try {
+    const raw = JSON.parse(await file.text());
+    const items = parseComponentFile(raw);
+    if (readOnly) return;
+    importedComponents = items;
+    libraryDialog();
+    $("#imported-components").scrollIntoView({ block: "nearest" });
+    const from = parseComponentVersion(raw.version);
+    const upgraded = compareVersions(from, COMPONENT_VERSION) < 0
+      ? `（格式已从 v${raw.version} 升级到 v${COMPONENT_VERSION}）` : "";
+    toast(`已导入 ${items.length} 个元件${upgraded}，点击名称即可放置`);
+  } catch (error) { toast(`元件导入失败：${error.message}`); }
+};
 $("#file-input").onchange = async (e) => {
   const f = e.target.files[0];
   e.target.value = "";
