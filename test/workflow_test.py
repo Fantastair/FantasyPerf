@@ -44,7 +44,9 @@ class WorkflowTests(unittest.TestCase):
                          'NoNewPrivileges=true', 'ReadWritePaths=/srv/fantasyperf']:
             self.assertIn(boundary, service)
         self.assertNotIn('gitea.service', service)
-        self.assertIn('OnUnitInactiveSec=60s', timer)
+        self.assertIn('OnCalendar=*-*-* 03:00:00 Asia/Shanghai', timer)
+        self.assertNotIn('OnUnitInactiveSec=', timer)
+        self.assertNotIn('OnBootSec=', timer)
         self.assertIn('Unit=fantasyperf-deploy.service', timer)
 
 

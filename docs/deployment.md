@@ -14,7 +14,7 @@ GitHub 是开发主仓库：<https://github.com/Fantastair/FantasyPerf>。开发
 
 ## 发布门禁
 
-服务器上的 `fantasyperf-deploy.timer` 每分钟检查一次，调用独立用户 `fantasyperf-deploy` 下的 `publish.py`：
+服务器上的 `fantasyperf-deploy.timer` 每天北京时间凌晨 03:00 检查一次（允许一分钟调度误差），也可通过 SSH 手动触发同一服务，调用独立用户 `fantasyperf-deploy` 下的 `publish.py`。定时器固定使用 `Asia/Shanghai` 时区；重启不会立即补跑，等待下一次凌晨任务：
 
 1. `git ls-remote` 获取 GitHub 最新 `main` SHA，已部署时直接返回，不调用 REST API。
 2. 查询该 SHA 对应的 `.github/workflows/ci.yml`、`push`、`main` 运行；仅认本仓库，采用最新运行的当前结果。
@@ -24,7 +24,7 @@ GitHub 是开发主仓库：<https://github.com/Fantastair/FantasyPerf>。开发
 
 当前构建只是复制静态文件（`scripts/build.mjs`），发布提取遵循同一约定。构建方式改变时须同步更新受控发布脚本。版本保存在 `/srv/fantasyperf/releases/<SHA>`，暂不自动清理。锁防止并发发布。
 
-公开仓库无需 API token。未通过或尚未开始的 CI 每两分钟查询一次，避免耗尽匿名 API 配额；限流时按 GitHub 提示等待，保留线上版本。多个服务共享出口时，可另配仅有本仓库 Actions 读取权限的 token，保存为 `/etc/fantasyperf/github-read.token`，权限 `root:fantasyperf-deploy 0640`。该文件不可进入 Git 或 CI。归档下载不携带 API token。
+公开仓库无需 API token。CI 尚未结束、失败或网络异常时，保留线上版本，等待下一次凌晨检查或手动触发。脚本保留两分钟的 CI 查询冷却，以及 GitHub 提示的限流冷却，防止连续手动触发消耗配额；冷却期间手动运行也会等待。多个服务共享出口时，可另配仅有本仓库 Actions 读取权限的 token，保存为 `/etc/fantasyperf/github-read.token`，权限 `root:fantasyperf-deploy 0640`。该文件不可进入 Git 或 CI。归档下载不携带 API token。
 
 ## 安装与迁移
 
@@ -47,7 +47,7 @@ sudo systemctl enable --now fantasyperf-deploy.timer
 git push -u origin <开发分支>
 ```
 
-迁移 PR 合并后，还需等待合并提交在 `main` 的 push CI 成功，才会首次发布；PR CI 成功本身不会触发上线。`deploy/` 是受控安装源，普通网页部署不会更新服务器脚本或单元。运维修改必须单独安装。
+迁移 PR 合并后，还需等待合并提交在 `main` 的 push CI 成功，再由凌晨任务或手动触发首次发布；PR CI 成功本身不会触发上线。`deploy/` 是受控安装源，普通网页部署不会更新服务器脚本或单元。运维修改必须单独安装。
 
 ## 检查与回滚
 
@@ -58,4 +58,4 @@ ssh 1003 'sudo systemctl start fantasyperf-deploy'  # 仍然检查所有门禁�
 ssh 1003 'curl -fsS http://127.0.0.1:4096/version.json'
 ```
 
-需要保持旧版本时，先停止 timer，再等待或停止正在执行的部署服务，然后原子替换 `current` 指向已验证版本。恢复 timer 后会重新部署最新且 CI 已通过的 `main`；要持续回滚，应提交修复/回退 PR。网络、CI 或下载失败不会切换线上版本；HTTP 校验失败会自动还原。
+需要保持旧版本时，先停止 timer，再等待或停止正在执行的部署服务，然后原子替换 `current` 指向已验证版本。恢复 timer 后，会在下一次凌晨检查时重新部署最新且 CI 已通过的 `main`；要持续回滚，应提交修复/回退 PR。网络、CI 或下载失败不会切换线上版本；HTTP 校验失败会自动还原。
