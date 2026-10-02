@@ -7,7 +7,7 @@ GitHub 是开发主仓库：<https://github.com/Fantastair/FantasyPerf>。开发
 `.github/workflows/ci.yml` 在面向 `main` 的 PR 和 `main` push 上运行：
 
 - `checks`：Node.js 22，单元测试、Python 部署安全检查、静态构建。
-- `browser`：Chromium、Firefox、WebKit，每个浏览器两个分片，共六个并行任务。Playwright 镜像版本必须与锁文件版本一致；`--fully-parallel` 允许单个 spec 内的测试分布到不同分片，各任务内部仍使用一个 worker。
+- `browser`：Chromium、Firefox、WebKit，每个浏览器两个分片，共六个并行任务。每个托管主机通过锁定的 Playwright 版本安装对应浏览器及系统依赖；`--fully-parallel` 允许单个 spec 内的测试分布到不同分片，各任务内部仍使用一个 worker。
 - `verify`：始终执行，只有 `checks` 和所有浏览器分片成功才通过。失败时上传浏览器测试产物，保存七天。
 
 任务运行在 GitHub 托管环境，只有仓库读取权限，不持有内网地址、SSH 密钥或部署凭据。建议在 GitHub Settings → Rules → Rulesets 中保护 `main`：要求 PR、禁止 force push，设置必需检查 `verify`。单维护者仓库应结合自己的审查流程设置批准数量。
@@ -39,7 +39,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now fantasyperf-deploy.timer
 ```
 
-迁移前备份旧发布脚本及相关 systemd 单元。停用旧 `fantasyperf-github-sync` 服务与两个仓库专用 Gitea Runner，撤销发布 Runner 的 sudo 白名单；防止旧 Gitea 主分支反向写回 GitHub。旧同步服务文件需移入备份后 mask。Gitea 服务和仓库数据保留，现有提交作为历史备份，不再接收日常开发 push。服务器不再依赖 Gitea 镜像，直接从 GitHub 拉取已通过的版本。
+迁移前备份旧发布脚本及相关 systemd 单元。停用旧 `fantasyperf-github-sync`，将旧单元文件移入备份后 mask，防止 Gitea 主分支反向写回 GitHub。现有 Runner、sudo 白名单和密钥保留；确认它们的使用范围并完成授权后，可单独退役。旧发布任务即使调用新服务，也必须经过 GitHub 门禁。Gitea 服务和仓库数据保留，现有提交作为历史备份，不再接收日常开发 push。服务器不再依赖 Gitea 镜像，直接从 GitHub 拉取已通过的版本。
 
 本地远程：`origin` 指向 GitHub，`gitea` 保留原内网地址。
 
