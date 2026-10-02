@@ -1317,6 +1317,16 @@ dialog::backdrop {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
   fill: var(--accent);
 }
+.pin-preview .preview-hole {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 0.6;
+  opacity: 0.5;
+}
+#component-pin-preview .pin-preview {
+  max-width: 336px;
+  margin: 0 auto 10px;
+}
 .component-files {
   border-top: 1px solid var(--border);
   margin-top: 20px;

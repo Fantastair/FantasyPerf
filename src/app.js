@@ -298,6 +298,7 @@ function refresh({ preserveInspector = false } = {}) {
   $('[data-action="redo"]').disabled = !history.future.length;
   $("#view-label").textContent =
     state.view === "split" ? "两面同步 · 左右镜像" : faceName(state.view);
+  $("#view-label").hidden = !readOnly;
   $("#status-face").textContent =
     state.view === "split"
       ? "并排核对"
@@ -609,7 +610,13 @@ function pinPreview(pins) {
   const minX = Math.min(...xs), minY = Math.min(...ys);
   const w = Math.max(...xs) - minX, h = Math.max(...ys) - minY;
   const scale = Math.min(14, 140 / Math.max(w, 1), 48 / Math.max(h, 1));
-  return `<svg class="pin-preview" viewBox="0 0 168 72" aria-hidden="true">${pins.map((p) => `<circle cx="${84 + (p.x - minX - w / 2) * scale}" cy="${36 + (p.y - minY - h / 2) * scale}" r="3" />`).join("")}</svg>`;
+  const holes = [];
+  if ((w + 1) * (h + 1) <= 400) {
+    for (let y = 0; y <= h; y++)
+      for (let x = 0; x <= w; x++)
+        holes.push(`<circle class="preview-hole" cx="${84 + (x - w / 2) * scale}" cy="${36 + (y - h / 2) * scale}" r="2" />`);
+  }
+  return `<svg class="pin-preview" viewBox="0 0 168 72" role="img" aria-label="引脚排列预览">${holes.join("")}${pins.map((p) => `<circle cx="${84 + (p.x - minX - w / 2) * scale}" cy="${36 + (p.y - minY - h / 2) * scale}" r="3" />`).join("")}</svg>`;
 }
 function placeLibraryComponent(item, name) {
   const o = instantiateLibraryItem(item, name);
@@ -768,11 +775,17 @@ function componentDialog(existing = null) {
   let custom = false;
   dialog(
     existing ? "编辑元件" : "自定义元件",
-    `${field("component-name", "元件名称", existing?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排间距（孔）", 1, 1, 20)}${numberField("pin-gap", "两排间距（孔）", 3, 1, 30)}</div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
+    `${field("component-name", "元件名称", existing?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排中心距（孔距）", 1, 1, 20)}${numberField("pin-gap", "两排之间空孔数", 2, 0, 29)}</div><p class="muted" id="pin-gap-help"></p><div id="component-pin-preview"></div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
     `${existing ? "" : '<button id="back-components">返回元件</button>'}<button data-close>取消</button><button id="place-component" class="primary">${existing ? "保存修改" : "放到板上"}</button>`,
   );
   const update = () => {
     $("#pin-labels").value = pins.map((p) => p.label).join("\n");
+    $("#component-pin-preview").innerHTML = pins.length ? pinPreview(pins) : "";
+    $("#pin-gap-help").textContent = custom
+      ? "按实际孔位排列引脚。"
+      : $("#pin-kind").value === "double"
+        ? `两排之间 ${$("#pin-gap").value} 个空孔；中心距 ${+$("#pin-gap").value + 1} 个孔距（${((+$("#pin-gap").value + 1) * PITCH).toFixed(2)} mm）。`
+        : "同排中心距 1 个孔距表示相邻孔位，2 个孔距表示中间隔 1 个空孔。";
     $("#pin-summary").textContent =
       `${pins.length} 个引脚 · 标注可留空；双排顺序为左侧向下、右侧向上`;
     if (custom) {
@@ -819,7 +832,7 @@ function componentDialog(existing = null) {
     if (!custom) {
       if (
         !["#pin-count", "#pin-spacing", "#pin-gap"].every(
-          (s) => $(s).checkValidity() && $(s).value,
+          (s) => $(s).disabled || ($(s).checkValidity() && $(s).value),
         )
       )
         return;
@@ -829,10 +842,11 @@ function componentDialog(existing = null) {
         $("#pin-kind").value,
         +$("#pin-count").value,
         +$("#pin-spacing").value,
-        +$("#pin-gap").value,
+        +$("#pin-gap").value + 1,
       );
       pins.forEach((p, i) => (p.label = labels[i] ?? p.label));
     }
+    $("#dialog-error").textContent = "";
     update();
   };
   if (existing) {
@@ -844,11 +858,17 @@ function componentDialog(existing = null) {
     $("#pin-gap").disabled = true;
   }
   ["#pin-kind", "#pin-count", "#pin-spacing", "#pin-gap"].forEach(
-    (s) => ($(s).onchange = generate),
+    (s) => ($(s).oninput = generate),
   );
   update();
   if (!existing) $("#back-components").onclick = libraryDialog;
   $("#place-component").onclick = () => {
+    if (!custom && !["#pin-count", "#pin-spacing", "#pin-gap"].every(
+      (s) => $(s).disabled || ($(s).checkValidity() && $(s).value),
+    )) {
+      $("#dialog-error").textContent = "请填写有效的引脚数量、中心距和空孔数";
+      return;
+    }
     syncLabels();
     if (!pins.length) {
       $("#dialog-error").textContent = "至少需要一个引脚";

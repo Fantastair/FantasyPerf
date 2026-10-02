@@ -53,7 +53,7 @@ test("具名 DIP 预设保留标准顶视引脚顺序及功能标注", () => {
   for (const [id, labels] of Object.entries(expected)) {
     const item = COMPONENT_LIBRARY.find((entry) => entry.id === id);
     assert.equal(item.group, "named");
-    assert.equal(item.category, "双排 · 排距 3 孔");
+    assert.equal(item.category, "双排 · 中间 2 个空孔");
     assert.deepEqual(item.pins.map((pin) => pin.label), labels);
     const half = labels.length / 2;
     assert.deepEqual(item.pins.map(({ x, y }) => [x, y]), [
