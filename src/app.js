@@ -47,6 +47,7 @@ import {
   toScreen,
   fromScreen,
   labelBox,
+  componentNameBox,
   drawScene,
 } from "./renderer.js";
 const $ = (s) => document.querySelector(s),
@@ -138,6 +139,7 @@ const referenceLayer = createReferenceLayer($(".stage"), {
   getProject: () => project,
   commit,
   notify: toast,
+  onVisibilityChange: () => refresh(),
   onSelect: () => {
     state.referenceSelected = true;
     state.selected.clear();
@@ -341,13 +343,13 @@ function updateHint() {
     select: "点击选择 · Shift 多选 · 拖动框选 · 空格拖动平移",
     component:
       state.placement?.mounting === "smd"
-        ? "点击相邻焊盘之间放置 · R 旋转 · Esc 取消"
-        : "点击孔位放置 · R 旋转 · Esc 取消",
-    solder: "两面均可画锡线（焊盘面线路） · Tab 切换拐弯 · Enter 完成",
+        ? "点击相邻焊盘之间放置 · R 旋转 · 右键 / Esc 取消"
+        : "点击孔位放置 · R 旋转 · 右键 / Esc 取消",
+    solder: "两面均可画锡线 · Tab 切换拐弯 · Enter 完成 · 右键退出",
     wire:
       state.wireMode === "direct"
-        ? "点击起点和终点 · Esc 取消"
-        : "点击添加折点 · Tab 切换拐弯 · Enter / 双击完成",
+        ? "点击起点和终点 · 右键 / Esc 取消"
+        : "点击添加折点 · Tab 切换拐弯 · Enter / 双击完成 · 右键退出",
   };
   $("#status-hint").textContent = hints[state.tool];
 }
@@ -449,12 +451,12 @@ function renderInspector() {
     const pads = objectPoints(o);
     root.insertAdjacentHTML(
       "beforeend",
-      `<div class="info-box">0603 / 0805 贴片电阻、电容示意。跨接两个相邻焊盘，不区分封装尺寸。</div><div class="data-row"><span>焊盘位置</span><strong>${holeName(pads[0])} ↔ ${holeName(pads[1])}</strong></div><div class="data-row"><span>旋转</span><strong>${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑元件</button></div><p class="muted">拖动移动 · R 旋转；可在名称中填写阻值或容值。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
+      `<div class="info-box">0603 / 0805 贴片电阻、电容示意。跨接两个相邻焊盘，不区分封装尺寸。</div><div class="data-row"><span>焊盘位置</span><strong>${holeName(pads[0])} ↔ ${holeName(pads[1])}</strong></div><div class="data-row"><span>旋转</span><strong>${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑元件</button></div><p class="muted">拖动元件移动 · R 旋转；名称可独立拖动并按半格吸附，可填写阻值或容值。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
     );
   } else if (o.type === "component") {
     root.insertAdjacentHTML(
       "beforeend",
-      `<div class="field-grid">${numberField("object-x", "列（从 1 起）", o.x + 1, 1, project.board.cols)}${numberField("object-y", "行", o.y + 1, 1, project.board.rows)}</div><div class="data-row"><span>基准孔 / 旋转</span><strong>${holeName(o)} / ${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑引脚布局</button></div><hr class="rule"><h2 class="section-heading">引脚标注 <small>${o.pins.length} 脚</small></h2><div class="pin-list">${o.pins.map((p, i) => `<div class="pin-row"><span>${holeName(pinPosition(o, p))}</span><input aria-label="引脚 ${i + 1} 标注" data-pin="${i}" maxlength="100" value="${esc(p.label)}"></div>`).join("")}</div><p class="muted">拖动画布中的标注可调整文字位置。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
+      `<div class="field-grid">${numberField("object-x", "列（从 1 起）", o.x + 1, 1, project.board.cols)}${numberField("object-y", "行", o.y + 1, 1, project.board.rows)}</div><div class="data-row"><span>基准孔 / 旋转</span><strong>${holeName(o)} / ${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑引脚布局</button></div><hr class="rule"><h2 class="section-heading">引脚标注 <small>${o.pins.length} 脚</small></h2><div class="pin-list">${o.pins.map((p, i) => `<div class="pin-row"><span>${holeName(pinPosition(o, p))}</span><input aria-label="引脚 ${i + 1} 标注" data-pin="${i}" maxlength="100" value="${esc(p.label)}"></div>`).join("")}</div><p class="muted">拖动名称或引脚标注可调整位置，按半格吸附；仅选中元件时显示指示连线。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
     );
     for (const key of ["x", "y"])
       bindNumber("#object-" + key, (n) => {
@@ -582,6 +584,8 @@ function smdDialog(existing = null) {
       y: existing?.y ?? 0,
       rotation: existing?.rotation ?? 0,
       pins: clone(existing?.pins ?? unlabeledPins("single", 2)),
+      ...(existing?.nameDx !== undefined ? { nameDx: existing.nameDx } : {}),
+      ...(existing?.nameDy !== undefined ? { nameDy: existing.nameDy } : {}),
     };
     if (existing)
       commit(() => {
@@ -862,6 +866,8 @@ function componentDialog(existing = null) {
       y: existing?.y ?? 0,
       rotation: existing?.rotation ?? 0,
       pins: clone(pins),
+      ...(existing?.nameDx !== undefined ? { nameDx: existing.nameDx } : {}),
+      ...(existing?.nameDy !== undefined ? { nameDy: existing.nameDy } : {}),
     };
     if (existing) {
       if (!fits([o], project.board)) {
@@ -982,7 +988,7 @@ function helpDialog() {
       ["平移画布", "空格拖动 / 中键拖动"],
       ["缩放 / 适合窗口", "滚轮 / F"],
       ["旋转元件", "R"],
-      ["结束 / 取消绘制", "Enter 或双击 / Esc"],
+      ["结束 / 退出工具", "Enter 或双击 / 右键或 Esc"],
       ["切换直角拐弯方向", "Tab"],
       ["撤销 / 重做", "Ctrl / ⌘ Z · Shift Z"],
       ["复制 / 粘贴", "Ctrl / ⌘ C · V"],
@@ -992,7 +998,7 @@ function helpDialog() {
       .map(([l, k]) => `<span>${l}</span><kbd>${k}</kbd>`)
       .join(
         "",
-      )}</div><hr class="rule"><p class="muted">线路绑定孔位。单独移动元件时，线路保持原位；一起框选则一起移动。选中线路后可拖动折点；拖动引脚标注可调整文字位置。重复点击重叠对象可轮换选择。</p><p class="muted">自动保存仅在当前浏览器生效，请定期导出完整项目。工具不做电气连接、短路或占孔校验。</p>`,
+      )}</div><hr class="rule"><p class="muted">线路绑定孔位。单独移动元件时，线路保持原位；一起框选则一起移动。选中线路后可拖动折点；名称和引脚标注可独立拖动，按半格吸附，仅选中元件时显示指示连线。右键取消当前工具并返回选择。重复点击重叠对象可轮换选择。</p><p class="muted">自动保存仅在当前浏览器生效，请定期导出完整项目。工具不做电气连接、短路或占孔校验。</p>`,
     '<button class="primary" data-close>开始设计</button>',
   );
 }
@@ -1260,6 +1266,34 @@ function eventPoint(e) {
 function activeOn(o, face) {
   return editableOnFace(o, face, state);
 }
+function labelAt(o, p, v) {
+  if (o.type !== "component") return null;
+  const ctx = canvas.getContext("2d");
+  const labels = o.name
+    ? [{ index: null, box: componentNameBox(ctx, o, project.board, v, state.camera) }]
+    : [];
+  if (o.mounting !== "smd" && state.showLabels)
+    o.pins.forEach((pin, index) => {
+      if (pin.label)
+        labels.push({ index, box: labelBox(ctx, o, pin, project.board, v, state.camera) });
+    });
+  return labels.find(({ box }) =>
+    p.x >= box.x - 3 && p.x <= box.x + box.w + 3 &&
+    p.y >= box.y && p.y <= box.y + box.h,
+  ) ?? null;
+}
+function startLabelDrag(o, label, p, v) {
+  gesture = {
+    kind: "label",
+    id: o.id,
+    index: label.index,
+    start: p,
+    view: v,
+    position: fromScreen({ x: label.box.tx, y: label.box.ty }, project.board, v, state.camera, false),
+    origin: label.index === null ? label.box.origin : pinPosition(o, o.pins[label.index]),
+    before: clone(project),
+  };
+}
 function hitObjects(p, v) {
   const grid = fromScreen(p, project.board, v, state.camera, false),
     tol = 7 / (CELL * state.camera.zoom);
@@ -1273,24 +1307,7 @@ function hitObjects(p, v) {
             grid.x <= b.maxX + 0.35 &&
             grid.y >= b.minY - 0.95 &&
             grid.y <= b.maxY + 0.35) ||
-          (o.mounting !== "smd" &&
-            o.pins.some((pin) => {
-              const b = labelBox(
-                canvas.getContext("2d"),
-                o,
-                pin,
-                project.board,
-                v,
-                state.camera,
-              );
-              return (
-                state.showLabels &&
-                p.x >= b.x - 3 &&
-                p.x <= b.x + b.w + 3 &&
-                p.y >= b.y &&
-                p.y <= b.y + b.h
-              );
-            }))
+          !!labelAt(o, p, v)
         );
       }
       return o.points.some(
@@ -1413,32 +1430,11 @@ canvas.addEventListener("pointerdown", (e) => {
   if (state.tool !== "select") return;
   // Selected handles get priority over objects underneath.
   for (const o of selectedObjects().filter((o) => activeOn(o, v.face))) {
-    if (o.type === "component" && o.mounting !== "smd" && state.showLabels) {
-      for (let i = 0; i < o.pins.length; i++) {
-        const box = labelBox(
-          canvas.getContext("2d"),
-          o,
-          o.pins[i],
-          project.board,
-          v,
-          state.camera,
-        );
-        if (
-          p.x >= box.x - 2 &&
-          p.x <= box.x + box.w + 2 &&
-          p.y >= box.y &&
-          p.y <= box.y + box.h
-        ) {
-          gesture = {
-            kind: "label",
-            id: o.id,
-            index: i,
-            start: p,
-            view: v,
-            before: clone(project),
-          };
-          return;
-        }
+    if (o.type === "component" && !e.shiftKey) {
+      const label = labelAt(o, p, v);
+      if (label) {
+        startLabelDrag(o, label, p, v);
+        return;
       }
     } else if (o.type !== "component") {
       const i = o.points.findIndex((pt) => {
@@ -1483,6 +1479,8 @@ canvas.addEventListener("pointerdown", (e) => {
       before: clone(project),
       ids: new Set(state.selected),
     };
+    const label = !e.shiftKey && labelAt(hit, p, v);
+    if (label) startLabelDrag(hit, label, p, v);
     panel = "properties";
     refresh();
   } else {
@@ -1542,19 +1540,20 @@ canvas.addEventListener("pointermove", (e) => {
       }
     } else if (d.kind === "label") {
       project = clone(d.before);
-      const pin = project.objects.find((o) => o.id === d.id).pins[d.index],
+      if (Math.hypot(p.x - d.start.x, p.y - d.start.y) < 3) {
+        requestDraw();
+        return;
+      }
+      const o = project.objects.find((o) => o.id === d.id),
+        target = d.index === null ? o : o.pins[d.index],
+        prefix = d.index === null ? "name" : "label",
         s = CELL * state.camera.zoom;
-      pin.labelDx = clamp(
-        (pin.labelDx ?? 0) +
-          ((p.x - d.start.x) / s) * (v.face === "back" ? -1 : 1),
-        -100,
-        100,
-      );
-      pin.labelDy = clamp(
-        (pin.labelDy ?? -0.55) + (p.y - d.start.y) / s,
-        -100,
-        100,
-      );
+      // Snap the text anchor to the board's half-hole grid in either face.
+      const x = Math.round((d.position.x +
+        ((p.x - d.start.x) / s) * (v.face === "back" ? -1 : 1)) * 2) / 2;
+      const y = Math.round((d.position.y + (p.y - d.start.y) / s) * 2) / 2;
+      target[prefix + "Dx"] = clamp(x - d.origin.x, -100, 100);
+      target[prefix + "Dy"] = clamp(y - d.origin.y, -100, 100);
     } else if (d.kind === "marquee") {
       state.marquee.end = p;
       const left = Math.min(d.start.x, p.x),
@@ -1658,7 +1657,13 @@ canvas.addEventListener(
   },
   { passive: false },
 );
-canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+$(".stage").addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  if (readOnly) return;
+  state.tool = "select";
+  cancel();
+  canvas.focus();
+});
 document.addEventListener("keydown", (e) => {
   const editable = e.target.closest("input,textarea,select,[contenteditable]");
   if (modal.open || editable) return;

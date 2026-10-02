@@ -182,7 +182,7 @@ test("项目完整往返及导入拒绝损坏数据", () => {
   }
 });
 test("版本号是三段式，可比较并识别早期整数版本", () => {
-  assert.equal(FORMAT_VERSION, "1.1.0");
+  assert.equal(FORMAT_VERSION, "1.2.0");
   assert.equal(versionMajor(FORMAT_VERSION), 1);
   assert.equal(compareVersions("1.0.0", "1.0.1"), -1);
   assert.equal(compareVersions("1.0.1", "1.1.0"), -1);
@@ -222,13 +222,13 @@ test("旧版本项目自动升级，不兼容版本被拒绝", () => {
   const strip = ({ meta, ...rest }) => ({ ...rest, version: "1.0.0" });
   assert.deepEqual(strip(upgraded), strip(current));
   assert.deepEqual(validateProject(legacy).objects, current.objects);
-  // 早期的整数版本号 2 等同于 1.1.0，可直接使用。
+  // 早期的整数版本号 2 等同于 1.1.0，继续升级名称位置格式。
   const numericTwo = clone(current);
   numericTwo.version = 2;
   assert.deepEqual(validateProject(numericTwo), current);
   // 小版本只做修复：更高的补丁号按当前版本读取，并归一化版本号。
   const laterPatch = clone(current);
-  laterPatch.version = "1.1.7";
+  laterPatch.version = "1.2.7";
   assert.deepEqual(validateProject(laterPatch), current);
   // 数据步骤之前的小版本号（1.0.3）按同大版本内最近的低版本（1.0.0）升级。
   const legacyPatch = clone(current);
@@ -236,8 +236,8 @@ test("旧版本项目自动升级，不兼容版本被拒绝", () => {
   delete legacyPatch.meta;
   assert.equal(validateProject(legacyPatch).version, FORMAT_VERSION);
   for (const bad of [
-    (p) => (p.version = "1.2.0"),
-    (p) => (p.version = "1.2.5"),
+    (p) => (p.version = "1.3.0"),
+    (p) => (p.version = "1.3.5"),
     (p) => (p.version = "2.0.0"),
     (p) => (p.version = "0.9.0"),
     (p) => (p.version = "1.1"),
@@ -253,7 +253,7 @@ test("旧版本项目自动升级，不兼容版本被拒绝", () => {
     assert.throws(() => validateProject(q));
   }
   assert.throws(
-    () => validateProject({ ...clone(current), version: "1.2.0" }),
+    () => validateProject({ ...clone(current), version: "1.3.0" }),
     /高于当前工具支持/,
   );
   assert.throws(
@@ -278,6 +278,27 @@ test("工具版本标识与 package.json 保持一致", async () => {
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
   assert.equal(APP_VERSION, pkg.version);
+});
+
+test("元件名称位置随项目保存，旧项目保持默认位置并拒绝无效偏移", () => {
+  const p = newProject(20, 15);
+  p.objects = [{
+    id: "named", type: "component", name: "U1", x: 7, y: 4, rotation: 90,
+    nameDx: 1.5, nameDy: -2, pins: regularPins("double", 8, 1, 3),
+  }];
+  assert.deepEqual(validateProject(JSON.parse(JSON.stringify(p))), p);
+  const legacy = clone(p);
+  legacy.version = "1.1.9";
+  delete legacy.objects[0].nameDx;
+  delete legacy.objects[0].nameDy;
+  assert.deepEqual(validateProject(legacy).objects, legacy.objects);
+  for (const value of [null, "1", Infinity, NaN, -101, 101]) {
+    for (const key of ["nameDx", "nameDy"]) {
+      const bad = clone(p);
+      bad.objects[0][key] = value;
+      assert.throws(() => validateProject(bad), /名称位置/);
+    }
+  }
 });
 
 test("撤销重做深拷贝且新操作清空重做", () => {

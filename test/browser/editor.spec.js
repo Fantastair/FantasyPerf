@@ -63,6 +63,225 @@ async function addComponent(page, name, x, y, kind = "double", count = "8") {
   await page.locator("#place-component").click();
   await clickHole(page, x, y);
 }
+async function dragBetween(page, start, end) {
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 6 });
+  await page.mouse.up();
+}
+
+test("名称与引脚标注按半格吸附，支持撤销、取消、编辑和文件复用", async ({ page }) => {
+  const { readFile } = await import("node:fs/promises");
+  await newBoard(page);
+  await addComponent(page, "U1", 7, 4);
+  await page.locator('[data-pin="0"]').fill("VCC");
+  await page.locator('[data-pin="0"]').press("Tab");
+  const original = (await saved(page)).objects[0];
+  // Clicking a label alone must not snap or move it.
+  await clickHole(page, 6.1, 4);
+  expect((await saved(page)).objects[0]).toEqual(original);
+  await dragBetween(page, await hole(page, 6.1, 4), await hole(page, 5.2, 2.8));
+  const movedPin = (await saved(page)).objects[0];
+  expect(movedPin.pins[0]).toMatchObject({ labelDx: -1.5, labelDy: -1 });
+  expect(movedPin).toMatchObject({ x: 7, y: 4, rotation: 0 });
+  // A name can be grabbed directly even when its component is unselected.
+  await clickHole(page, 17, 11);
+  await dragBetween(page, await hole(page, 8.5, 2.75), await hole(page, 10.1, 1.9));
+  const movedName = (await saved(page)).objects[0];
+  expect(movedName).toMatchObject({ x: 7, y: 4, nameDx: 1.5, nameDy: -2 });
+  expect(movedName.pins).toEqual(movedPin.pins);
+  await page.locator('[data-action="undo"]').click();
+  expect((await saved(page)).objects[0]).toEqual(movedPin);
+  await page.locator('[data-action="redo"]').click();
+  expect((await saved(page)).objects[0]).toEqual(movedName);
+
+  await clickHole(page, 7, 5);
+  const start = await hole(page, 10, 2), end = await hole(page, 12, 1);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 4 });
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  expect((await saved(page)).objects[0]).toEqual(movedName);
+  await clickHole(page, 7, 5);
+  await page.locator('[data-action="edit-component"]').click();
+  await page.locator("#component-name").fill("测试芯片");
+  await page.locator("#place-component").click();
+  let current = (await saved(page)).objects[0];
+  expect(current).toMatchObject({ name: "测试芯片", nameDx: 1.5, nameDy: -2 });
+  await page.locator('[data-action="rotate"]').click();
+  current = (await saved(page)).objects[0];
+  expect(current).toMatchObject({ rotation: 90, nameDx: 1.5, nameDy: -2 });
+  await page.screenshot({ path: "artifacts/annotation-positions.png" });
+
+  const pending = page.waitForEvent("download");
+  await page.locator('[data-action="export-component"]').click();
+  const buffer = await readFile(await (await pending).path());
+  expect(JSON.parse(buffer).components[0]).toMatchObject({ nameDx: 1.5, nameDy: -2 });
+  await page.reload();
+  expect((await saved(page)).objects[0]).toEqual(current);
+  await page.locator("#component-file-input").setInputFiles({
+    name: "位置.json", mimeType: "application/json", buffer,
+  });
+  await page.locator('[data-imported="0"]').click();
+  await clickHole(page, 13, 7);
+  expect((await saved(page)).objects[1]).toMatchObject({
+    name: "测试芯片", x: 13, y: 7, nameDx: 1.5, nameDy: -2, pins: movedPin.pins,
+  });
+});
+
+test("贴片名称在镜像和并排视图中拖动吸附，不改变焊盘", async ({ page }) => {
+  await newBoard(page);
+  await page.locator('.tools [data-tool="component"]').click();
+  await page.locator('[data-library="smd-resistor"]').click();
+  await clickHole(page, 4.5, 4, "back");
+  const original = (await saved(page)).objects[0];
+  await dragBetween(page,
+    await hole(page, 4.5, 3.42, "back"), await hole(page, 2.8, 2.2, "back"));
+  const moved = (await saved(page)).objects[0];
+  expect(moved).toMatchObject({ x: 4, y: 4, nameDx: -1.5, nameDy: -2 });
+  expect(moved.pins).toEqual(original.pins);
+  await page.locator('[data-view="split"]').click();
+  await dragBetween(page,
+    await hole(page, 3, 2, "back", 20, 15, true),
+    await hole(page, 2.3, 1.4, "back", 20, 15, true));
+  expect((await saved(page)).objects[0]).toMatchObject({
+    x: 4, y: 4, nameDx: -2, nameDy: -2.5, pins: original.pins,
+  });
+  await page.locator('[data-action="edit-component"]').click();
+  await page.locator("#smd-name").fill("10 kΩ");
+  await page.locator("#place-smd").click();
+  expect((await saved(page)).objects[0]).toMatchObject({ name: "10 kΩ", nameDx: -2, nameDy: -2.5 });
+});
+
+test("标注连线只在选中时显示，包含默认位置且不进入导出或淡显面", async ({ page }) => {
+  await newBoard(page);
+  await page.locator("#theme-mode").selectOption("light");
+  const counts = await page.evaluate(async () => {
+    const { newProject } = await import("/src/core.js");
+    const { drawScene } = await import("/src/renderer.js");
+    const project = newProject(10, 10);
+    project.objects = [{
+      id: "labels", type: "component", name: "U1", x: 4, y: 4, rotation: 0,
+      pins: [
+        { x: 0, y: 0, label: "默认" },
+        { x: 1, y: 0, label: "移动", labelDx: 2, labelDy: -2 },
+        { x: 2, y: 0, label: "" },
+      ],
+    }];
+    const state = {
+      view: "front", camera: { zoom: 1, panX: 0, panY: 0 },
+      selected: new Set(["labels"]), showLabels: true, showGhost: true,
+    };
+    const canvas = document.createElement("canvas"), ctx = canvas.getContext("2d");
+    let count = 0;
+    const stroke = ctx.stroke.bind(ctx);
+    ctx.stroke = (...args) => {
+      if (ctx.strokeStyle === "#8fa9a1" && Math.abs(ctx.lineWidth - 0.7) < 1e-6) count++;
+      stroke(...args);
+    };
+    const render = (overrides = {}, exporting = false) => {
+      count = 0;
+      drawScene(canvas, project, { ...state, ...overrides }, { width: 600, height: 600, exporting });
+      return count;
+    };
+    return {
+      selected: render(), unselected: render({ selected: new Set() }),
+      export: render({}, true), ghost: render({ view: "back" }),
+      labelsHidden: render({ showLabels: false }),
+    };
+  });
+  expect(counts).toEqual({ selected: 3, unselected: 0, export: 0, ghost: 0, labelsHidden: 1 });
+});
+
+test("参考图临时隐藏可从画布和属性恢复，不保存或占用撤销，刷新恢复", async ({ page }) => {
+  const { readFile } = await import("node:fs/promises");
+  await newBoard(page);
+  await page.locator('.tools [data-action="demo"]').click();
+  await page.locator("#create-project").click();
+  const baseline = await saved(page);
+  await page.locator('.tools [data-tool="wire"]').click();
+  await page.locator(".reference-image").click({ button: "right" });
+  await expect(page.locator('.tools [data-tool="select"]')).toHaveClass(/active/);
+  await page.getByRole("button", { name: "临时隐藏参考图", exact: true }).click();
+  await expect(page.locator(".reference-image")).toBeHidden();
+  await expect(page.locator(".reference-restore")).toBeVisible();
+  await page.locator('[data-view="back"]').click();
+  await page.locator('.tools [data-action="fit"]').click();
+  await expect(page.locator(".reference-image")).toBeHidden();
+  expect(await saved(page)).toEqual(baseline);
+  await page.locator(".reference-restore").click();
+  await expect(page.locator(".reference-image")).toBeVisible();
+  await page.locator('[data-action="reference"]').click();
+  await page.locator("#reference-temporary-visibility").click();
+  await expect(page.locator(".reference-image")).toBeHidden();
+  await expect(page.locator("#reference-visible")).toBeChecked();
+  await expect(page.locator("#reference-temporary-visibility")).toHaveText("恢复显示参考图");
+  await page.locator("#reference-temporary-visibility").click();
+  await expect(page.locator(".reference-image")).toBeVisible();
+  await page.locator("#reference-temporary-visibility").click();
+
+  await page.locator('[data-action="export"]').click();
+  const pending = page.waitForEvent("download");
+  await page.locator('[data-export="project"]').click();
+  const exported = JSON.parse(await readFile(await (await pending).path(), "utf8"));
+  expect(exported.reference).toEqual(baseline.reference);
+  await page.locator("[data-close]").click();
+  await page.locator('[data-action="undo"]').click();
+  expect((await saved(page)).reference).toBeNull();
+  await expect(page.locator(".reference-restore")).toBeHidden();
+  await page.locator('[data-action="redo"]').click();
+  await expect(page.locator(".reference-image")).toBeVisible();
+  await page.getByRole("button", { name: "临时隐藏参考图", exact: true }).first().click();
+  await page.reload();
+  await expect(page.locator(".reference-image")).toBeVisible();
+  expect((await saved(page)).reference).toEqual(baseline.reference);
+  await page.locator('[data-action="reference"]').click();
+  await page.locator("#reference-visible").uncheck();
+  await saved(page);
+  await expect(page.locator(".reference-restore")).toBeHidden();
+  await page.reload();
+  await expect(page.locator(".reference-image")).toBeHidden();
+});
+
+test("右键退出元件预览、锡线和两种跳线工具，仅取消未完成操作", async ({ page }) => {
+  await newBoard(page);
+  await addComponent(page, "保留元件", 7, 4);
+  const baseline = await saved(page), p = await hole(page, 12, 8);
+  const exit = async () => {
+    await page.mouse.click(p.x, p.y, { button: "right" });
+    await expect(page.locator('.tools [data-tool="select"]')).toHaveClass(/active/);
+    expect(await saved(page)).toEqual(baseline);
+    await clickHole(page, 12, 8);
+    expect(await saved(page)).toEqual(baseline);
+  };
+  await page.locator('.tools [data-tool="component"]').click();
+  await page.locator('[data-library="ne555"]').click();
+  await page.mouse.move(p.x, p.y);
+  await exit();
+  for (const [tool, mode] of [["solder", null], ["wire", "direct"], ["wire", "orthogonal"]]) {
+    await page.locator(`.tools [data-tool="${tool}"]`).click();
+    if (mode) await page.locator("#wire-mode").selectOption(mode);
+    await clickHole(page, 9, 7);
+    if (mode !== "direct") await clickHole(page, 11, 9);
+    await page.mouse.move(p.x, p.y);
+    await exit();
+  }
+  // Cancelled drafts create no history entries.
+  await page.locator('[data-action="undo"]').click();
+  expect((await saved(page)).objects).toHaveLength(0);
+  await page.locator('[data-action="redo"]').click();
+  expect(await saved(page)).toEqual(baseline);
+  await page.locator('.tools [data-tool="wire"]').click();
+  await page.locator("#wire-mode").selectOption("direct");
+  await clickHole(page, 9, 7);
+  await clickHole(page, 12, 8);
+  const completed = await saved(page);
+  expect(completed.objects).toHaveLength(2);
+  await page.mouse.click(p.x, p.y, { button: "right" });
+  await expect(page.locator('.tools [data-tool="select"]')).toHaveClass(/active/);
+  expect(await saved(page)).toEqual(completed);
+});
 test("已验证的 555 示例保留完整设计，两个清单入口均不导出锡线", async ({
   page,
 }) => {
@@ -681,7 +900,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   );
   await page.locator("#confirm-import").click();
   await expect(page.locator("#toast")).toContainText(
-    "格式已从 v1.0.0 升级到 v1.1.0",
+    `格式已从 v1.0.0 升级到 v${FORMAT_VERSION}`,
   );
   await expect(page.locator("#project-name")).toHaveValue("旧版项目");
   // 等自动保存落盘后再检查升级后的数据。
@@ -699,7 +918,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   // 更高的小版本只包含修复，直接打开并归一到当前格式版本。
   const patch = demoProject();
   patch.name = "补丁项目";
-  patch.version = "1.1.9";
+  patch.version = "1.2.9";
   await open("patch.json", patch);
   await expect(page.locator("#modal")).not.toContainText("升级");
   await page.locator("#confirm-import").click();
@@ -710,7 +929,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   const current = await storedOf();
   // 更高的中版本与大版本都被拒绝，当前项目不受影响。
   for (const [file, version, message] of [
-    ["minor.json", "1.2.0", "高于当前工具支持"],
+    ["minor.json", "1.3.0", "高于当前工具支持"],
     ["major.json", "2.0.0", "大版本"],
   ]) {
     const future = demoProject();
@@ -950,12 +1169,12 @@ test("元件旧文件自动升级，补丁兼容且未来版本不覆盖已导�
     await expect(page.locator("#toast")).toContainText(`升级到 v${COMPONENT_VERSION}`);
     await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");
   }
-  const patch = { ...createComponentFile([item]), version: "1.1.9" };
+  const patch = { ...createComponentFile([item]), version: "1.2.9" };
   await open(patch);
   await expect(page.locator("#toast")).toContainText("已导入 1 个元件");
   await expect(page.locator("#toast")).not.toContainText("升级到");
   const before = await saved(page);
-  for (const [version, message] of [["1.2.0", "升级工具"], ["2.0.0", "大版本"]]) {
+  for (const [version, message] of [["1.3.0", "升级工具"], ["2.0.0", "大版本"]]) {
     await open({ ...patch, version, components: [{ ...item, name: "不应导入" }] });
     await expect(page.locator("#toast")).toContainText(message);
     await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");

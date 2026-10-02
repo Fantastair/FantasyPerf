@@ -150,6 +150,30 @@ export function labelBox(ctx, component, pin, board, view, camera) {
     pos,
   };
 }
+export function componentNameBox(ctx, component, board, view, camera) {
+  const b = bounds([component]);
+  const origin = { x: (b.minX + b.maxX) / 2, y: b.minY };
+  const position = {
+    x: origin.x + (component.nameDx ?? 0),
+    y: origin.y + (component.nameDy ?? (component.mounting === "smd" ? -0.58 : -1.25)),
+  };
+  const point = toScreen(position, board, view, camera);
+  const fontSize = Math.max(10, Math.min(13, 12 * camera.zoom));
+  ctx.font = `${fontSize}px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif`;
+  const width = ctx.measureText(component.name).width;
+  return {
+    x: point.x - width / 2,
+    y: point.y - fontSize / 2 - 3,
+    w: width,
+    h: fontSize + 6,
+    tx: point.x,
+    ty: point.y,
+    fontSize,
+    origin,
+    position,
+    pos: toScreen({ x: origin.x, y: (b.minY + b.maxY) / 2 }, board, view, camera),
+  };
+}
 export function drawScene(
   canvas,
   project,
@@ -303,14 +327,6 @@ export function drawScene(
           ctx.strokeRect(-s * 0.4, -s * 0.24, s * 0.8, s * 0.48);
         }
         ctx.restore();
-        text(
-          ctx,
-          o.name,
-          cx,
-          Math.min(a.y, b.y) - s * 0.58,
-          ink("#385e57"),
-          Math.max(10, Math.min(13, 12 * camera.zoom)),
-        );
       } else if (o.type === "component") {
         const ps = objectPoints(o).map(to);
         const minX = Math.min(...ps.map((p) => p.x)),
@@ -332,14 +348,6 @@ export function drawScene(
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
-        text(
-          ctx,
-          o.name,
-          (minX + maxX) / 2,
-          minY - s * 1.25,
-          selected ? ink("#06796e") : ink("#375f58"),
-          Math.max(10, Math.min(13, 12 * camera.zoom)),
-        );
         for (const pin of o.pins) {
           const p = to(pinPosition(o, pin));
           circle(
@@ -351,9 +359,9 @@ export function drawScene(
             selected ? ink("#008e7a") : ink("#448172"),
             1.8,
           );
-          if (state.showLabels !== false) {
+          if (state.showLabels !== false && pin.label) {
             const b = labelBox(ctx, o, pin, board, v, camera);
-            if (Math.hypot(b.tx - p.x, b.ty - p.y) > s * 0.8)
+            if (selected)
               line(ctx, [p, { x: b.tx, y: b.ty }], ink("#8fa9a1"), 0.7);
             ctx.lineWidth = 3;
             ctx.strokeStyle = ink("#f0f6f2");
@@ -468,6 +476,13 @@ export function drawScene(
             ctx.strokeRect(p.x - 4, p.y - 4, 8, 8);
           });
         }
+      }
+      if (o.type === "component") {
+        const b = componentNameBox(ctx, o, board, v, camera);
+        if (selected && o.name)
+          line(ctx, [b.pos, { x: b.tx, y: b.ty }], ink("#8fa9a1"), 0.7);
+        text(ctx, o.name, b.tx, b.ty,
+          selected ? ink("#06796e") : ink("#375f58"), b.fontSize);
       }
       ctx.restore();
     };

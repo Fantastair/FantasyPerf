@@ -5,7 +5,7 @@ import {
 
 export const COMPONENT_FORMAT = "FantasyPerfComponents";
 // Independent of the project format version; follows the same compatibility rules.
-export const COMPONENT_VERSION = "1.1.0";
+export const COMPONENT_VERSION = "1.2.0";
 const COMPONENT_MIGRATIONS = {
   "1.0.0": {
     to: "1.1.0",
@@ -18,6 +18,7 @@ const COMPONENT_MIGRATIONS = {
       },
     }),
   },
+  "1.1.0": { to: "1.2.0", migrate: (data) => ({ ...data }) },
 };
 
 export function parseComponentVersion(value) {
@@ -69,11 +70,15 @@ export function validateComponent(raw) {
     x: Math.max(0, -Math.min(...raw.pins.map((p) => p?.x))),
     y: Math.max(0, -Math.min(...raw.pins.map((p) => p?.y))),
     rotation: 0, pins: raw.pins,
+    ...(raw.nameDx !== undefined ? { nameDx: raw.nameDx } : {}),
+    ...(raw.nameDy !== undefined ? { nameDy: raw.nameDy } : {}),
     ...(raw.mounting !== undefined ? { mounting: raw.mounting, kind: raw.kind } : {}),
   }];
   const component = validateProject(project).objects[0];
   return {
     name: component.name, pins: component.pins,
+    ...(component.nameDx !== undefined ? { nameDx: component.nameDx } : {}),
+    ...(component.nameDy !== undefined ? { nameDy: component.nameDy } : {}),
     ...(component.mounting ? { mounting: component.mounting, kind: component.kind } : {}),
   };
 }

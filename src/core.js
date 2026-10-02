@@ -6,9 +6,9 @@ export const FORMAT = "FantasyPerf";
 //   大版本：数据含义不兼容的重构，正常情况下保持稳定；
 //   中版本：新增功能带来的向后兼容扩展，旧文件自动升级；
 //   小版本：仅修复，不改变数据含义，同中版本内互相兼容。
-export const FORMAT_VERSION = "1.1.0";
+export const FORMAT_VERSION = "1.2.0";
 // 生成文件的工具版本，与 package.json 保持一致（由单元测试看住）。
-export const APP_VERSION = "1.1.0";
+export const APP_VERSION = "1.2.0";
 export const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 // 早期的整数版本号：1 等同于 1.0.0；2 是引入 meta 的那次改动，等同于 1.1.0。
 const LEGACY_VERSIONS = { 1: "1.0.0", 2: "1.1.0" };
@@ -50,6 +50,8 @@ const FORMAT_MIGRATIONS = {
       meta: { app: FORMAT, appVersion: null, savedAt: null },
     }),
   },
+  // 1.1.0 → 1.2.0：可选名称偏移；缺省时沿用自动位置。
+  "1.1.0": { to: "1.2.0", migrate: (data) => ({ ...data }) },
 };
 // 版本号解析：接受三段式字符串，也接受早期的整数版本。
 export function parseVersion(value) {
@@ -460,6 +462,11 @@ export function validateProject(raw) {
           fail("贴片元件必须跨接两个相邻焊盘");
         v.mounting = "smd";
         v.kind = o.kind;
+      }
+      for (const key of ["nameDx", "nameDy"]) {
+        if (o[key] === undefined) continue;
+        if (!num(o[key], -100, 100)) fail("元件名称位置无效");
+        v[key] = o[key];
       }
     } else if (o.type === "solder" || o.type === "wire") {
       if (

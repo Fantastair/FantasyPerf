@@ -852,8 +852,14 @@ dialog::backdrop {
   font-size: 12px;
   color: #426a66;
 }
-.reference-head small {
-  font-size: 10px;
+.reference-hide {
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.reference-restore {
+  position: absolute;
+  z-index: 3;
+  box-shadow: 0 3px 12px #213e4326;
 }
 .reference-image img {
   display: block;
@@ -1155,6 +1161,7 @@ dialog::backdrop {
 [data-readonly="true"] .local-label,
 [data-readonly="true"] .stage-note,
 [data-readonly="true"] .reference-image,
+[data-readonly="true"] .reference-restore,
 [data-readonly="true"] .file-actions [data-action="new"],
 [data-readonly="true"] .file-actions [data-action="export"] {
   display: none;
