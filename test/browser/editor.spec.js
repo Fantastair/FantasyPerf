@@ -1098,7 +1098,7 @@ test("统一元件入口、常用排布与清除网站数据后的文件恢复",
   await page.keyboard.press("Escape");
   await expect(page.locator('.tools [data-tool="select"]')).toHaveClass(/active/);
   await page.keyboard.press("c");
-  await page.locator("#library-category").selectOption("双排 · 排距 3 孔");
+  await page.locator("#library-category").selectOption("双排 · 中间 2 个空孔");
   await page.locator("#library-search").fill("运放");
   await expect(page.locator("[data-library]")).toHaveCount(3);
   await page.screenshot({ path: "artifacts/component-library.png" });
@@ -1257,4 +1257,80 @@ test("旧模板删除遇到存储失败或其他窗口变更不会丢失数据",
   await page.locator('[data-delete-legacy="0"]').click();
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBeNull();
   await expect(page.locator("#modal")).not.toContainText("旧版浏览器模板");
+});
+
+test("双排按中间空孔数预览和放置，零空孔为相邻两排", async ({ page }) => {
+  await newBoard(page);
+  await page.keyboard.press("c");
+  await page.locator("#library-category").selectOption("双排 · 中间 2 个空孔");
+  await expect(page.locator('[data-library="ne555"]')).toContainText("中心距 7.62 mm");
+  await expect(page.locator('[data-library="ne555"] .preview-hole')).toHaveCount(16);
+  await page.locator("#library-custom").click();
+  await expect(page.getByLabel("两排之间空孔数", { exact: true })).toHaveValue("2");
+  await expect(page.locator("#pin-gap-help")).toContainText("中心距 3 个孔距（7.62 mm）");
+  await expect(page.locator("#component-pin-preview .preview-hole")).toHaveCount(16);
+  await page.screenshot({ path: "artifacts/pin-gap-default.png" });
+  await page.locator("#place-component").click();
+  await clickHole(page, 3, 3);
+  const first = (await saved(page)).objects[0];
+  expect([...new Set(first.pins.map((pin) => pin.x))]).toEqual([0, 3]);
+  await page.keyboard.press("c");
+  await page.locator("#library-custom").click();
+  await page.locator("#pin-gap").fill("0");
+  await expect(page.locator("#pin-gap-help")).toContainText("中心距 1 个孔距（2.54 mm）");
+  await expect(page.locator("#component-pin-preview .preview-hole")).toHaveCount(8);
+  await page.locator("#pin-gap").fill("-1");
+  await page.locator("#place-component").click();
+  await expect(page.locator("#dialog-error")).toContainText("请填写有效");
+  expect((await saved(page)).objects).toHaveLength(1);
+  await page.locator("#pin-gap").fill("0");
+  await page.locator("#place-component").click();
+  await clickHole(page, 9, 3);
+  const second = (await saved(page)).objects[1];
+  expect([...new Set(second.pins.map((pin) => pin.x))]).toEqual([0, 1]);
+  // Editing an existing component keeps its physical pin positions.
+  await page.locator('[data-action="edit-component"]').click();
+  await page.locator("#place-component").click();
+  expect((await saved(page)).objects[1].pins).toEqual(second.pins);
+});
+
+test("编辑画布无重复板面标题，查看器和 PNG 保留方向信息", async ({ page }) => {
+  await newBoard(page);
+  await saved(page);
+  const titles = await page.evaluate(async () => {
+    const { newProject } = await import("/src/core.js");
+    const { drawScene } = await import("/src/renderer.js");
+    const project = newProject(10, 8);
+    const canvas = document.createElement("canvas"), ctx = canvas.getContext("2d");
+    const original = ctx.fillText.bind(ctx);
+    let texts = [];
+    ctx.fillText = (value, ...args) => { texts.push(value); original(value, ...args); };
+    const render = (view, readOnly = false, exporting = false) => {
+      texts = [];
+      drawScene(canvas, project, {
+        view, readOnly, camera: { zoom: 1, panX: 0, panY: 0 }, selected: new Set(),
+      }, { width: 800, height: 600, exporting });
+      return texts.filter((value) => /元件面|焊盘面/.test(value));
+    };
+    return {
+      front: render("front"), back: render("back"), split: render("split"),
+      viewer: render("split", true), png: render("split", false, true),
+    };
+  });
+  expect(titles).toEqual({
+    front: [], back: [], split: [],
+    viewer: ["元件面 · A1 左上", "焊盘面 · A1 右上"],
+    png: ["正面 · 元件面  /  A1 左上", "背面 · 焊盘面  /  A1 右上"],
+  });
+  await expect(page.locator('[data-view="front"]')).toHaveClass("active");
+  await expect(page.locator("#view-label")).toBeHidden();
+  await page.screenshot({ path: "artifacts/editor-without-view-title.png" });
+  await page.locator('[data-view="back"]').click();
+  await expect(page.locator('[data-view="back"]')).toHaveClass("active");
+  await expect(page.locator("#view-label")).toBeHidden();
+  await page.locator('[data-view="split"]').click();
+  await expect(page.locator('[data-view="split"]')).toHaveClass("active");
+  await expect(page.locator("#view-label")).toBeHidden();
+  await page.goto("/?view=1");
+  await expect(page.locator("#view-label")).toBeVisible();
 });

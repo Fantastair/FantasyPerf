@@ -280,12 +280,12 @@ export function drawScene(
         11,
         "right",
       );
-    else
+    else if (exporting)
       text(
         ctx,
         `${v.face === "front" ? "正面 · 元件面" : "背面 · 焊盘面"}  /  A1 ${v.face === "front" ? "左上" : "右上"}`,
         v.x + v.w / 2,
-        exporting ? 50 : Math.max(v.y + (state.readOnly ? 40 : 73), by - 42),
+        50,
         ink("#82969b"),
         11,
       );
