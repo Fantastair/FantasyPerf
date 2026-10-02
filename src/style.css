@@ -1319,3 +1319,9 @@ dialog::backdrop {
 .component-files .wide { margin-top: 6px; text-align: left; }
 .component-file-note { margin-top: 18px !important; }
 .template-list { max-height: 160px; overflow: auto; }
+.library-group-title {
+  grid-column: 1 / -1;
+  margin: 4px 0;
+  font-size: 13px;
+  color: var(--muted);
+}

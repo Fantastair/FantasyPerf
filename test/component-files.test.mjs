@@ -33,11 +33,30 @@ test("元件文件拒绝错误格式、未来版本、重复引脚和损坏的�
   ]) assert.throws(() => parseComponentFile({ ...valid, components }));
 });
 
-test("常用 DIP 预设按物理排布分类且不绑定功能标注", () => {
-  for (const [id, count] of [["ne555", 8], ["opamp-single-8", 8], ["opamp-dual-8", 8], ["opamp-quad-14", 14]]) {
+test("通用引脚排布不预置标注", () => {
+  const generic = COMPONENT_LIBRARY.filter((item) => item.group === "generic");
+  assert.ok(generic.length > 0);
+  assert.ok(generic.every((item) => item.pins.every((pin) => pin.label === "")));
+});
+
+test("具名 DIP 预设保留标准顶视引脚顺序及功能标注", () => {
+  const expected = {
+    ne555: ["GND", "TRIG", "OUT", "RESET", "CONT", "THRES", "DISCH", "VCC"],
+    "opamp-single-8": ["NC", "IN−", "IN+", "V−", "NC", "OUT", "V+", "NC"],
+    "opamp-dual-8": ["OUT1", "IN1−", "IN1+", "V−", "IN2+", "IN2−", "OUT2", "V+"],
+    "opamp-quad-14": ["OUT1", "IN1−", "IN1+", "V+", "IN2+", "IN2−", "OUT2", "OUT3", "IN3−", "IN3+", "V−", "IN4+", "IN4−", "OUT4"],
+  };
+  for (const [id, labels] of Object.entries(expected)) {
     const item = COMPONENT_LIBRARY.find((entry) => entry.id === id);
+    assert.equal(item.group, "named");
     assert.equal(item.category, "双排 · 排距 3 孔");
-    assert.deepEqual(item.pins, regularPins("double", count, 1, 3));
+    assert.deepEqual(item.pins.map((pin) => pin.label), labels);
+    const half = labels.length / 2;
+    assert.deepEqual(item.pins.map(({ x, y }) => [x, y]), [
+      ...Array.from({ length: half }, (_, i) => [0, i]),
+      ...Array.from({ length: half }, (_, i) => [3, half - 1 - i]),
+    ]);
+    assert.deepEqual(parseComponentFile(createComponentFile([{ name: item.title, pins: item.pins }]))[0].pins, item.pins);
   }
 });
 

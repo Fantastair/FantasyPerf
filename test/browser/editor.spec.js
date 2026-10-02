@@ -432,7 +432,7 @@ test("编辑靠后的引脚保留滚动位置并可连续 Tab 或点击编辑", 
   expect(p.objects[0].pins[19].label).toBe("DATA19");
   await page.locator('[data-action="undo"]').click();
   p = await saved(page);
-  expect(p.objects[0].pins[19].label).toBe("20");
+  expect(p.objects[0].pins[19].label).toBe("");
   expect(p.objects[0].pins[18].label).toBe("DATA18");
   await page.locator('[data-action="redo"]').click();
   p = await saved(page);
@@ -737,7 +737,7 @@ test("公共元件库搜索、分类、直接放置及实例独立", async ({ pa
   await page.locator('[data-library="header-4"]').click();
   await clickHole(page, 3, 6);
   p = await saved(page);
-  expect(p.objects[1].pins[0].label).toBe("1");
+  expect(p.objects[1].pins[0].label).toBe("");
   expect(p.objects[1].name).toBe("J2");
   await page.locator('.tools [data-tool="component"]').click();
   await page.locator("#library-category").selectOption("两焊盘 · 贴片");
@@ -893,6 +893,7 @@ test("统一元件入口、常用排布与清除网站数据后的文件恢复",
   expect(download.suggestedFilename()).toBe("U1.fantasyperf-components.json");
   const buffer = await readFile(await download.path());
   expect(JSON.parse(buffer).components[0].pins).toEqual(before.pins);
+  expect(before.pins.map((pin) => pin.label)).toEqual(["GND", "TRIG", "OUT", "RESET", "CONT", "THRES", "DISCH", "VCC"]);
   expect(await page.evaluate(() => localStorage.getItem("fantasyperf.templates.v1"))).toBeNull();
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -969,4 +970,72 @@ test("元件旧文件自动升级，补丁兼容且未来版本不覆盖已导�
   expect(exported.version).toBe(COMPONENT_VERSION);
   expect(exported.components).toEqual([item]);
   expect(exported.meta.appVersion).toBeTruthy();
+});
+
+test("旧模板导出后可删除，取消不变且刷新后不会复现", async ({ page }) => {
+  const { regularPins } = await import("../../src/core.js");
+  const key = "fantasyperf.templates.v1";
+  const invalid = { name: "无法识别的旧记录", data: "保留" };
+  const items = [invalid, { name: "待删除", pins: regularPins("single", 2) }, { name: "保留模板", pins: regularPins("single", 3) }];
+  await newBoard(page);
+  await page.evaluate(({ key, items }) => localStorage.setItem(key, JSON.stringify(items)), { key, items });
+  await page.reload();
+  await page.locator('.tools [data-tool="component"]').click();
+  const pending = page.waitForEvent("download");
+  await page.locator('[data-export-legacy="0"]').click();
+  const file = await (await pending).path();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "删除旧模板 待删除", exact: true }).click();
+  await expect(page.locator("[data-delete-legacy]")).toHaveCount(2);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除旧模板 待删除", exact: true }).click();
+  await expect(page.locator("[data-delete-legacy]")).toHaveCount(1);
+  expect(await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key)).toEqual([invalid, items[2]]);
+  await page.reload();
+  await page.locator('.tools [data-tool="component"]').click();
+  await expect(page.getByRole("button", { name: "删除旧模板 待删除", exact: true })).toHaveCount(0);
+  await page.locator("#component-file-input").setInputFiles(file);
+  await expect(page.locator('[data-imported="0"]')).toContainText("待删除");
+  await page.locator('[data-imported="0"]').click();
+  await clickHole(page, 3, 3);
+  expect((await saved(page)).objects[0].name).toBe("待删除");
+  await page.locator('.tools [data-tool="component"]').click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除旧模板 保留模板", exact: true }).click();
+  await expect(page.locator("#modal")).not.toContainText("旧版浏览器模板");
+  expect(await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key)).toEqual([invalid]);
+});
+
+test("旧模板删除遇到存储失败或其他窗口变更不会丢失数据", async ({ page }) => {
+  const { regularPins } = await import("../../src/core.js");
+  const key = "fantasyperf.templates.v1";
+  const items = [{ name: "原模板", pins: regularPins("single", 2) }];
+  await newBoard(page);
+  await page.evaluate(({ key, items }) => localStorage.setItem(key, JSON.stringify(items)), { key, items });
+  await page.reload();
+  await page.locator('.tools [data-tool="component"]').click();
+  await page.evaluate((key) => {
+    const remove = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function (k) {
+      if (k === key) throw new Error("storage unavailable");
+      return remove.call(this, k);
+    };
+  }, key);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator('[data-delete-legacy="0"]').click();
+  await expect(page.locator("#toast")).toContainText("删除失败");
+  await expect(page.locator("[data-delete-legacy]")).toHaveCount(1);
+  expect(await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key)).toEqual(items);
+  await page.reload();
+  await page.locator('.tools [data-tool="component"]').click();
+  const changed = [{ ...items[0], name: "其他窗口的新模板" }];
+  await page.evaluate(({ key, changed }) => localStorage.setItem(key, JSON.stringify(changed)), { key, changed });
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator('[data-delete-legacy="0"]').click();
+  await expect(page.locator("#toast")).toContainText("其他窗口变更");
+  expect(await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key)).toEqual(changed);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator('[data-delete-legacy="0"]').click();
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBeNull();
+  await expect(page.locator("#modal")).not.toContainText("旧版浏览器模板");
 });

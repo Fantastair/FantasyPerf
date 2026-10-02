@@ -2,7 +2,7 @@ import {
   COMPONENT_VERSION, parseComponentVersion,
   validateComponent, parseComponentFile, createComponentFile,
 } from "./component-files.js";
-import { COMPONENT_LIBRARY, instantiateLibraryItem } from "./library.js";
+import { COMPONENT_LIBRARY, instantiateLibraryItem, unlabeledPins } from "./library.js";
 import { installViewerGestures } from "./viewer.js";
 import { createReferenceLayer } from "./reference.js";
 import {
@@ -37,7 +37,6 @@ import {
   editVertex,
   distanceToSegment,
   History,
-  regularPins,
   demoProject,
   validateProject,
   objectsCSV,
@@ -83,6 +82,7 @@ let readOnly = viewerQuery || mobileMedia.matches;
 let desktopSession = null;
 document.documentElement.dataset.readonly = String(readOnly);
 let templates = [], importedComponents = [];
+let legacyTemplateRecords = [], legacyTemplateIndices = [], legacyTemplateSnapshot = null;
 try {
   const raw = localStorage.getItem(STORE);
   if (raw) {
@@ -99,14 +99,24 @@ try {
     100,
   );
 }
-try {
-  const legacy = JSON.parse(localStorage.getItem(TEMPLATES) || "[]");
-  if (Array.isArray(legacy)) {
-    for (const raw of legacy.slice(0, 100)) {
-      try { templates.push(validateComponent(raw)); } catch {}
-    }
+function readLegacyTemplates() {
+  const snapshot = localStorage.getItem(TEMPLATES);
+  const legacy = JSON.parse(snapshot || "[]");
+  if (!Array.isArray(legacy)) throw new Error("旧模板数据无效");
+  const valid = [], indices = [];
+  for (const [index, raw] of legacy.entries()) {
+    try {
+      valid.push(validateComponent(raw));
+      indices.push(index);
+    } catch {}
+    if (valid.length === 100) break;
   }
-} catch {}
+  templates = valid;
+  legacyTemplateIndices = indices;
+  legacyTemplateRecords = legacy;
+  legacyTemplateSnapshot = snapshot;
+}
+try { readLegacyTemplates(); } catch {}
 const state = {
   view: "front",
   tool: "select",
@@ -571,7 +581,7 @@ function smdDialog(existing = null) {
       x: existing?.x ?? 0,
       y: existing?.y ?? 0,
       rotation: existing?.rotation ?? 0,
-      pins: regularPins("single", 2),
+      pins: clone(existing?.pins ?? unlabeledPins("single", 2)),
     };
     if (existing)
       commit(() => {
@@ -625,7 +635,7 @@ function libraryDialog() {
   const categories = [...new Set(COMPONENT_LIBRARY.map((item) => item.category))];
   dialog(
     "元件",
-    `<p class="muted">按引脚排布选择，点击即可放置。预设只提供孔位与数字编号，功能标注可在放置后修改。</p><div class="field-grid"><div class="field"><label for="library-search">搜索元件</label><input id="library-search" type="search" placeholder="NE555、8 脚、运放、单排…"></div><div class="field"><label for="library-category">引脚排布</label><select id="library-category"><option value="">全部排布</option>${categories.map((category) => `<option>${esc(category)}</option>`).join("")}</select></div></div><div id="library-results" class="library-results"></div><div id="imported-components"></div>${templates.length ? `<section class="component-files"><h3>旧版浏览器模板</h3><p class="muted">发现 ${templates.length} 个旧模板。清除网站数据会丢失，请导出文件留存。</p><button id="export-legacy">导出全部旧模板</button><div class="template-list">${templates.map((t, i) => `<div class="template-row"><button data-legacy="${i}">${esc(t.name)} · ${t.pins.length} 脚 · 放置</button><button data-export-legacy="${i}">导出</button></div>`).join("")}</div></section>` : ""}<p class="muted component-file-note">选中板上元件可导出文件，之后在此导入复用。文件由你保管；导入列表仅在本次打开页面期间保留。</p>`,
+    `<p class="muted">通用排布不带引脚标注；常用元件按所列型号预置功能标注。按排布筛选，点击即可放置。</p><div class="field-grid"><div class="field"><label for="library-search">搜索元件</label><input id="library-search" type="search" placeholder="NE555、8 脚、运放、单排…"></div><div class="field"><label for="library-category">引脚排布</label><select id="library-category"><option value="">全部排布</option>${categories.map((category) => `<option>${esc(category)}</option>`).join("")}</select></div></div><div id="library-results" class="library-results"></div><div id="imported-components"></div>${templates.length ? `<section class="component-files"><h3>旧版浏览器模板</h3><p class="muted">发现 ${templates.length} 个旧模板。清除网站数据会丢失，请导出文件留存，导出后可手动删除这里的旧模板。</p><button id="export-legacy">导出全部旧模板</button><div class="template-list">${templates.map((t, i) => `<div class="template-row"><button data-legacy="${i}">${esc(t.name)} · ${t.pins.length} 脚 · 放置</button><button data-export-legacy="${i}">导出</button><button data-delete-legacy="${i}" aria-label="删除旧模板 ${esc(t.name)}">删除</button></div>`).join("")}</div></section>` : ""}<p class="muted component-file-note">选中板上元件可导出文件，之后在此导入复用。文件由你保管；导入列表仅在本次打开页面期间保留。</p>`,
     '<button data-close>关闭</button><button id="import-components">导入元件</button><button id="library-custom" class="primary">自定义元件</button>',
   );
   const render = () => {
@@ -636,7 +646,11 @@ function libraryDialog() {
         `${item.title} ${item.description} ${item.keywords ?? ""}`.toLowerCase().replace(/\s/g, "").includes(query),
     );
     $("#library-results").innerHTML = items.length
-      ? items.map((item) => `<button class="library-item" data-library="${item.id}">${pinPreview(item.pins)}<strong>${esc(item.title)}</strong><small>${esc(item.description)}</small><span>放置 →</span></button>`).join("")
+      ? [["generic", "通用引脚排布 · 无标注"], ["named", "常用元件 · 型号预设"]]
+          .map(([group, title]) => {
+            const matches = items.filter((item) => item.group === group);
+            return matches.length ? `<h3 class="library-group-title">${title}</h3>${matches.map((item) => `<button class="library-item" data-library="${item.id}">${pinPreview(item.pins)}<strong>${esc(item.title)}</strong><small>${esc(item.description)}</small><span>放置 →</span></button>`).join("")}` : "";
+          }).join("")
       : '<p class="empty-list">没有匹配项，可创建自定义元件。</p>';
     $$("[data-library]").forEach((button) => button.onclick = () => {
       const item = COMPONENT_LIBRARY.find((item) => item.id === button.dataset.library);
@@ -658,6 +672,24 @@ function libraryDialog() {
       exportComponents([item], item.name);
     });
   }
+  $$("[data-delete-legacy]").forEach((button) => button.onclick = () => {
+    const index = +button.dataset.deleteLegacy;
+    if (!confirm(`删除旧模板「${templates[index].name}」？已导出的文件和板上元件不受影响。`)) return;
+    try {
+      if (localStorage.getItem(TEMPLATES) !== legacyTemplateSnapshot) {
+        readLegacyTemplates();
+        libraryDialog();
+        toast("旧模板已在其他窗口变更，列表已刷新，请重新选择要删除的模板");
+        return;
+      }
+      const remaining = legacyTemplateRecords.filter((_, i) => i !== legacyTemplateIndices[index]);
+      if (remaining.length) localStorage.setItem(TEMPLATES, JSON.stringify(remaining));
+      else localStorage.removeItem(TEMPLATES);
+      readLegacyTemplates();
+      libraryDialog();
+      toast("旧模板已删除");
+    } catch { toast("删除失败，浏览器存储不可用，旧模板列表已保留"); }
+  });
   renderImportedComponents();
   render();
 }
@@ -727,7 +759,7 @@ function viewerReference() {
 }
 function componentDialog(existing = null) {
   let pins = clone(
-    existing?.pins ?? regularPins("double", 8, 1, 3),
+    existing?.pins ?? unlabeledPins("double", 8, 1, 3),
   );
   let custom = false;
   dialog(
@@ -738,7 +770,7 @@ function componentDialog(existing = null) {
   const update = () => {
     $("#pin-labels").value = pins.map((p) => p.label).join("\n");
     $("#pin-summary").textContent =
-      `${pins.length} 个引脚 · 双排按一侧向下、另一侧向上编号`;
+      `${pins.length} 个引脚 · 标注可留空；双排顺序为左侧向下、右侧向上`;
     if (custom) {
       $("#custom-grid").innerHTML = Array.from({ length: 96 }, (_, i) => {
         const x = i % 12,
@@ -761,7 +793,7 @@ function componentDialog(existing = null) {
                 pins.push({
                   x,
                   y,
-                  label: String(pins.length + 1),
+                  label: "",
                   labelDx: 0,
                   labelDy: -0.55,
                 });
@@ -789,7 +821,7 @@ function componentDialog(existing = null) {
         return;
       syncLabels();
       const labels = pins.map((p) => p.label);
-      pins = regularPins(
+      pins = unlabeledPins(
         $("#pin-kind").value,
         +$("#pin-count").value,
         +$("#pin-spacing").value,
