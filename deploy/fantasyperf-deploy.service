@@ -1,6 +1,7 @@
 [Unit]
-Description=Publish verified FantasyPerf main
-After=network.target gitea.service nginx.service
+Description=Publish GitHub CI-verified FantasyPerf main
+After=network-online.target nginx.service
+Wants=network-online.target
 
 [Service]
 Type=oneshot

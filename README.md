@@ -80,6 +80,8 @@ npm run build
 
 ## 开发与测试
 
+开发主仓库为 [GitHub](https://github.com/Fantastair/FantasyPerf)。PR 与 `main` push 由 GitHub Actions 执行单元测试、部署安全检查、构建及 Chromium / Firefox / WebKit 两分片矩阵测试；内网服务器每天北京时间凌晨 3 点或手动触发时拉取最新且 CI 已通过的 `main` 发布。配置与运维见 [部署说明](docs/deployment.md)。
+
 ```sh
 npm install
 npm test

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub nightly for a verified FantasyPerf release
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+AccuracySec=1m
+Persistent=false
+Unit=fantasyperf-deploy.service
+
+[Install]
+WantedBy=timers.target
