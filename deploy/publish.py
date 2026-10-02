@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Publish the latest main only after its own Gitea push CI succeeds.
+"""Poll GitHub main and publish only its completed, successful push CI.
 
-Runs under a dedicated unprivileged systemd user, triggered by the deploy job of
-.gitea/workflows/ci.yml (needs: verify, push to main only). Never executes
-repository code. The static build contract is index.html + src/ + LICENSE
-(scripts/build.mjs).
+Never executes repository code. The static build contract remains
+index.html + src/ + LICENSE (scripts/build.mjs).
 """
 import fcntl
 import io
@@ -13,21 +11,35 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 
-API = os.environ.get("FANTASYPERF_API", "http://127.0.0.1:3000/api/v1")
+API = "https://api.github.com"
 REPO = "Fantastair/FantasyPerf"
 ROOT = Path(os.environ.get("FANTASYPERF_ROOT", "/srv/fantasyperf"))
-TOKEN = Path(os.environ.get("FANTASYPERF_TOKEN", "/etc/fantasyperf/deploy.token"))
+TOKEN = Path(os.environ.get("FANTASYPERF_TOKEN", "/etc/fantasyperf/github-read.token"))
+REQUIRED_JOBS = {"checks", "verify"} | {
+    f"browser ({browser}, {shard}/2)"
+    for browser in ("chromium", "firefox", "webkit") for shard in (1, 2)
+}
 
 
 def get(path, raw=False):
-    request = urllib.request.Request(
-        f"{API}/repos/{REPO}/{path}",
-        headers={"Authorization": "token " + TOKEN.read_text().strip()},
-    )
+    headers = {"User-Agent": "FantasyPerf-deploy", "Accept": "application/vnd.github+json",
+               "X-GitHub-Api-Version": "2022-11-28"}
+    if raw:
+        # Public archive download deliberately carries no API credential.
+        url = f"https://codeload.github.com/{REPO}/tar.gz/{path}"
+        headers = {"User-Agent": "FantasyPerf-deploy"}
+    else:
+        url = f"{API}/repos/{REPO}/{path}"
+        if TOKEN.is_file():
+            headers["Authorization"] = "Bearer " + TOKEN.read_text().strip()
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=60) as response:
         data = response.read(32 * 1024 * 1024 + 1)
     if len(data) > 32 * 1024 * 1024:
@@ -36,36 +48,40 @@ def get(path, raw=False):
 
 
 def head():
-    sha = get("branches/main")["commit"]["id"]
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise ValueError("Invalid commit SHA")
-    return sha
-
-
-# 任务被 deploy job 在运行内部触发时，这条 push 运行本身仍在进行中。
-UNFINISHED = ("in_progress", "running", "waiting", "queued", "pending")
+    # Git polling does not consume GitHub's anonymous REST API quota.
+    result = subprocess.run(
+        ["git", "-c", "credential.helper=", "ls-remote",
+         f"https://github.com/{REPO}.git", "refs/heads/main"],
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+             "GIT_CONFIG_GLOBAL": "/dev/null"},
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    match = re.fullmatch(r"([0-9a-f]{40})\s+refs/heads/main\s*", result.stdout)
+    if not match:
+        raise ValueError("Invalid main ref")
+    return match.group(1)
 
 
 def eligible(sha):
-    """返回 True 表示该提交的 verify 已通过，可以发布。
-
-    只认 main 的 push 运行；运行已结束但不是 success（失败、取消）时一律不放行，
-    仍在进行时以 verify job 的结果为准——deploy job 就在这条运行内部。
-    """
-    runs = get(f"actions/runs?event=push&branch=main&head_sha={sha}&limit=50")
+    """Require the newest matching push run and every matrix job to succeed."""
+    runs = get(f"actions/workflows/ci.yml/runs?event=push&branch=main&head_sha={sha}&per_page=100")
     runs = [r for r in runs["workflow_runs"] if
             r["head_sha"] == sha and r["event"] == "push" and
-            r["head_branch"] in ("main", "refs/heads/main") and
-            r["path"].split("@", 1)[0] in ("ci.yml", ".gitea/workflows/ci.yml")]
+            r["head_branch"] == "main" and
+            r["path"].split("@", 1)[0] == ".github/workflows/ci.yml" and
+            r.get("head_repository", {}).get("full_name", "").lower() == REPO.lower()]
     if not runs:
         return False
     run = max(runs, key=lambda r: r["id"])
-    state = run.get("conclusion") or run.get("status")
-    if state != "success" and state not in UNFINISHED:
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
         return False
-    jobs = get(f"actions/runs/{run['id']}/jobs")["jobs"]
-    return any(j["name"] == "verify" and (j.get("conclusion") or j.get("status")) == "success"
-               and j["head_sha"] == sha for j in jobs)
+    # filter=latest includes successful jobs retained when rerunning failed jobs.
+    jobs = get(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")["jobs"]
+    names = {j["name"] for j in jobs}
+    return REQUIRED_JOBS <= names and all(
+        j.get("status") == "completed" and j.get("conclusion") == "success"
+        and j.get("head_sha") == sha for j in jobs
+    )
 
 
 def extract_static(data, destination):
@@ -75,7 +91,7 @@ def extract_static(data, destination):
             path = PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts:
                 raise ValueError("Unsafe archive path")
-            # Gitea archives contain one top-level repository directory.
+            # GitHub archives contain one top-level repository directory.
             relative = PurePosixPath(*path.parts[1:])
             if not relative.parts:
                 continue
@@ -109,13 +125,20 @@ def publish():
         target = releases / sha
         if current.is_symlink() and current.resolve() == target:
             return
+        retry = ROOT / ".ci-retry.json"
+        if retry.exists():
+            state = json.loads(retry.read_text())
+            if state.get("sha") == sha and time.time() < state.get("after", 0):
+                return
+        # Pending/failed CI is checked at most every two minutes (public API quota).
+        retry.write_text(json.dumps({"sha": sha, "after": time.time() + 120}))
         if not eligible(sha):
             print(f"Waiting for successful main CI: {sha}")
             return
         if not target.exists():
             with tempfile.TemporaryDirectory(prefix=".staging-", dir=releases) as temp:
                 staging = Path(temp)
-                extract_static(get(f"archive/{sha}.tar.gz", raw=True), staging)
+                extract_static(get(sha, raw=True), staging)
                 (staging / "version.json").write_text(json.dumps({"commit": sha}) + "\n")
                 staging.chmod(0o755)
                 staging.rename(target)
@@ -143,7 +166,20 @@ def publish():
                 current.unlink(missing_ok=True)
             raise
         print(f"Published {sha}; previous={previous}")
+        retry.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
-    publish()
+    try:
+        publish()
+    except urllib.error.HTTPError as error:
+        if error.code not in (403, 429):
+            raise
+        # Retain the current release and respect GitHub's rate-limit cooldown.
+        retry = ROOT / ".ci-retry.json"
+        if retry.exists():
+            state = json.loads(retry.read_text())
+            state["after"] = max(time.time() + int(error.headers.get("Retry-After", "120")),
+                                 float(error.headers.get("X-RateLimit-Reset", "0")))
+            retry.write_text(json.dumps(state))
+        print(f"GitHub HTTP {error.code}; keeping current release and retrying later")

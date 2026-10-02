@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub for a verified FantasyPerf release
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=fantasyperf-deploy.service
+
+[Install]
+WantedBy=timers.target
