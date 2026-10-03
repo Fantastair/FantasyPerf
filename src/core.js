@@ -9,7 +9,7 @@ export const FORMAT = "FantasyPerf";
 //   小版本：仅修复，不改变数据含义，同中版本内互相兼容。
 export const FORMAT_VERSION = "1.4.0";
 // 生成文件的工具版本，与 package.json 保持一致（由单元测试看住）。
-export const APP_VERSION = "1.4.0";
+export const APP_VERSION = "1.4.1";
 export const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 // 早期的整数版本号：1 等同于 1.0.0；2 是引入 meta 的那次改动，等同于 1.1.0。
 const LEGACY_VERSIONS = { 1: "1.0.0", 2: "1.1.0" };
@@ -140,6 +140,8 @@ export function faceName(face) {
 export function editableOnFace(o, face, state) {
   return (
     objectFace(o) === face ||
+    (o.type === "component" && !state.readOnly && state.tool === "logic") ||
+    (o.mounting === "smd" && !state.readOnly && face === "front" && state.showGhost !== false) ||
     (o.type === "solder" &&
       face === "front" &&
       (state.showGhost !== false || state.tool === "solder"))

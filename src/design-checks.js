@@ -162,18 +162,33 @@ export function connectionGraph(project) {
   return { root, touched };
 }
 
-// Display one logical link per remaining electrical island, even before all pins are declared.
+// Connect electrical islands by a minimum spanning tree using their closest declared pins.
 export function pendingLogicalConnections(project) {
   const { root } = connectionGraph(project), nets = new Map(), links = [];
   for (const t of terminals(project)) {
     if (!t.pin.net) continue;
     if (!nets.has(t.pin.net)) nets.set(t.pin.net, new Map());
     const groups = nets.get(t.pin.net), r = root(key(t.point));
-    if (!groups.has(r)) groups.set(r, t);
+    if (!groups.has(r)) groups.set(r, new Map());
+    groups.get(r).set(key(t.point), t.point);
   }
   for (const [net, groups] of nets) {
-    const [first, ...rest] = groups.values();
-    for (const t of rest) links.push({ net, from: first.point, to: t.point });
+    const islands = [...groups.values()].map((points) => [...points.values()]);
+    const remaining = new Set(islands.map((_, i) => i).slice(1)), best = new Map();
+    let added = 0;
+    while (remaining.size) {
+      for (const i of remaining) {
+        for (const from of islands[added]) for (const to of islands[i]) {
+          const distance = (from.x - to.x) ** 2 + (from.y - to.y) ** 2;
+          if (!best.has(i) || distance < best.get(i).distance) best.set(i, { distance, from, to });
+        }
+      }
+      let next = null;
+      for (const i of remaining) if (next === null || best.get(i).distance < best.get(next).distance) next = i;
+      const { from, to } = best.get(next);
+      links.push({ net, from, to });
+      remaining.delete(next); added = next;
+    }
   }
   return links;
 }
@@ -206,7 +221,7 @@ export function analyzeConnections(project) {
     if (names.length > 1) errors.push(issue("short", `误短接：连接组 ${names.map((n) => `「${n}」`).join("、")} 实际相连`, ts));
     for (const t of ts.filter((t) => t.pin.nc))
       if (ts.length > 1) errors.push(issue("nc", `${t.object.name} 第 ${t.index + 1} 脚（NC）连接了其他引脚`, ts));
-    for (const t of ts.filter((t) => !t.pin.nc && !touched.has(key(t.point))))
+    for (const t of ts.filter((t) => !t.pin.nc && ts.length === 1 && !touched.has(key(t.point))))
       warnings.push(issue("floating", `${t.object.name} 第 ${t.index + 1} 脚没有实际连线`, [t], "warning"));
   }
   // A wire end without another conductor or terminal at that hole is a dangling tail.

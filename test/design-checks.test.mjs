@@ -197,7 +197,7 @@ test("逻辑显示按实际连通部分合并，局部连接隐藏局部虚线�
   assert.equal(declarationStatus(p).enabled, false);
   assert.equal(pendingLogicalConnections(p).length, 2);
   p.objects.push(solder("s", [{ x: 2, y: 2 }, { x: 6, y: 2 }]));
-  assert.deepEqual(pendingLogicalConnections(p), [{ net: "A", from: { x: 2, y: 2 }, to: { x: 9, y: 2 } }]);
+  assert.deepEqual(pendingLogicalConnections(p), [{ net: "A", from: { x: 6, y: 2 }, to: { x: 9, y: 2 } }]);
   p.objects.push(wire("w", [{ x: 6, y: 2 }, { x: 9, y: 2 }]));
   assert.equal(pendingLogicalConnections(p).length, 0);
   p.objects.pop(); assert.equal(pendingLogicalConnections(p).length, 1);
@@ -209,4 +209,33 @@ test("新引脚的标注偏移默认居中，已有显式偏移仍保留", () =>
   const a = component("a", 2, 2, [{ x: 0, y: 0, label: "A", labelDx: 1.5, labelDy: -2 }]);
   const p = project(a); p.version = "1.3.0";
   assert.deepEqual(validateProject(p).objects[0].pins[0], a.pins[0]);
+});
+
+test("逻辑线取最近端子构成最短连通树，不依赖元件列表顺序，不跨连接组", () => {
+  const p = project(component("a", 0, 0), component("b", 9, 0), component("c", 8, 0), component("d", 8, 3),
+    component("other", 8, 1, [{ x: 0, y: 0, label: "", net: "B" }]));
+  const edges = (links) => links.map(({ from, to }) => [from, to].map((p) => `${p.x},${p.y}`).sort().join("/")).sort();
+  const expected = ["0,0/8,0", "8,0/9,0", "8,0/8,3"].sort();
+  assert.deepEqual(edges(pendingLogicalConnections(p)), expected);
+  p.objects.reverse(); assert.deepEqual(edges(pendingLogicalConnections(p)), expected);
+  // Joining the remote and near pins leaves the near member as the best remaining endpoint.
+  p.objects.push(wire("w", [{ x: 0, y: 0 }, { x: 8, y: 0 }]));
+  assert.deepEqual(edges(pendingLogicalConnections(p)), ["8,0/9,0", "8,0/8,3"].sort());
+});
+
+test("贴片直接接其他引脚的焊盘无需额外锡线，不误报悬空，仍检查漏接、短接和 NC", () => {
+  const a = component("a", 3, 3), b = component("b", 4, 3, [{ x: 0, y: 0, label: "", net: "B" }]);
+  const r = component("r", 3, 3, [{ x: 0, y: 0, label: "", net: "A" }, { x: 1, y: 0, label: "", net: "B" }],
+    { mounting: "smd", kind: "resistor" });
+  const p = project(a, b, r);
+  assert.deepEqual(analyzeConnections(p).warnings, []);
+  assert.deepEqual(kinds(p), []);
+  assert.deepEqual(collisionIssues(p), []);
+  p.objects.splice(1, 1);
+  assert.deepEqual(analyzeConnections(p).warnings.map((w) => w.message), ["r 第 2 脚没有实际连线"]);
+  a.pins[0].net = "B"; assert.ok(kinds(p).includes("short"));
+  delete a.pins[0].net; a.pins[0].nc = true; assert.ok(kinds(p).includes("nc"));
+  a.pins[0].nc = false; a.pins[0].net = "A"; a.x = 2;
+  assert.ok(kinds(p).includes("open"));
+  assert.equal(analyzeConnections(p).warnings.length, 3);
 });

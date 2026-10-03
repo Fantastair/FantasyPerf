@@ -56,6 +56,17 @@ const DARK_COLORS = {
   "#078b7d": "#6ae1c1",
 };
 export const CELL = 28;
+let logicSignature = null, cachedLogicLinks = [];
+function logicalLinksFor(project) {
+  // Mouse movement and zoom redraw frequently; rebuild the tree only when connectivity changes.
+  const signature = JSON.stringify(project.objects.map((o) => o.type === "component"
+    ? [o.x, o.y, o.rotation, o.pins.filter((p) => p.net).map((p) => [p.x, p.y, p.net])]
+    : [o.type, o.points]));
+  if (signature !== logicSignature) {
+    cachedLogicLinks = pendingLogicalConnections(project); logicSignature = signature;
+  }
+  return cachedLogicLinks;
+}
 export function viewsFor(width, height, view, stacked = false) {
   if (stacked) height = Math.max(100, height - 96);
   if (view === "split" && stacked)
@@ -97,6 +108,18 @@ export function fromScreen(p, board, view, camera, round = true) {
   const x = screenX((p.x - t.ox) / t.scale, board.cols, view.face),
     y = (p.y - t.oy) / t.scale;
   return { x: round ? Math.round(x) : x, y: round ? Math.round(y) : y };
+}
+// Keep the visible target and the click radius identical, without overlapping adjacent pads.
+export const pinHitRadius = (camera) => Math.min(Math.max(10, 8 * camera.zoom), CELL * camera.zoom / 2);
+export function logicalPinAt(project, point, view, camera) {
+  const radius = pinHitRadius(camera);
+  let target = null, nearest = Infinity;
+  for (const terminal of terminals(project)) {
+    const p = toScreen(terminal.point, project.board, view, camera);
+    const distance = Math.hypot(p.x - point.x, p.y - point.y);
+    if (distance <= radius && distance < nearest) { target = terminal; nearest = distance; }
+  }
+  return target;
 }
 function text(ctx, s, x, y, color = "#708589", size = 11, align = "center") {
   ctx.fillStyle = color;
@@ -203,7 +226,7 @@ export function drawScene(
     views = viewsFor(width, height, state.view, !exporting && state.readOnly),
     camera = state.camera;
   const diagnostics = !exporting && !state.readOnly;
-  const logicalLinks = diagnostics && (state.showLogic || state.tool === "logic") ? pendingLogicalConnections(project) : [];
+  const logicalLinks = diagnostics && (state.showLogic || state.tool === "logic") ? logicalLinksFor(project) : [];
   const physical = diagnostics ? collisionIssues(state.placement
     ? { ...project, objects: [...project.objects, state.placement] } : project) : [];
   for (const v of views) {
@@ -568,7 +591,7 @@ export function drawScene(
     }
     if (!exporting && state.hover) {
       const p = to(state.hover);
-      circle(ctx, p.x, p.y, 8 * camera.zoom, null, ink("#168e7e"), 1.4);
+      circle(ctx, p.x, p.y, pinHitRadius(camera), null, ink("#168e7e"), 1.4);
       line(
         ctx,
         [

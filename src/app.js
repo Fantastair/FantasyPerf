@@ -49,6 +49,7 @@ import {
   fromScreen,
   labelBox,
   componentNameBox,
+  logicalPinAt,
   drawScene,
 } from "./renderer.js";
 import { collisionIssues, firstNewCollision, declarationStatus, analyzeConnections, defaultShell, terminals } from "./design-checks.js";
@@ -372,7 +373,7 @@ function updateHint() {
       state.placement?.mounting === "smd"
         ? "点击相邻焊盘之间放置 · R 旋转 · 右键 / Esc 取消"
         : "点击孔位放置 · R 旋转 · 右键 / Esc 取消",
-    logic: state.logicalStart ? "点击第二个引脚建立逻辑连接 · 可翻面选择 · Esc 取消" : "点击两个元件引脚声明同组 · 不产生实际导线",
+    logic: state.logicalStart ? "点击第二个引脚建立逻辑连接 · 可直接跨面选择 · Esc 取消" : "点击两个元件引脚声明同组 · 可直接选择另一面的引脚",
     solder: "两面均可画锡线 · Tab 切换拐弯 · Enter 完成 · 右键退出",
     wire:
       state.wireMode === "direct"
@@ -442,7 +443,7 @@ function renderInspector() {
     return;
   }
   if (!selected.length) {
-    root.innerHTML = `<h2 class="section-heading">洞洞板 <small>独立焊盘</small></h2><div class="field-grid">${numberField("cols", "列数", project.board.cols, 2, 100)}${numberField("rows", "行数", project.board.rows, 2, 100)}</div><div class="info-box">${((project.board.cols - 1) * PITCH).toFixed(2)} × ${((project.board.rows - 1) * PITCH).toFixed(2)} mm<br>首末孔中心距 · 固定孔距 2.54 mm</div><hr class="rule"><h2 class="section-heading">视图显示</h2><label class="check"><input id="ghost" type="checkbox" ${state.showGhost ? "checked" : ""}>淡显另一面内容</label><label class="check"><input id="labels" type="checkbox" ${state.showLabels ? "checked" : ""}>显示引脚标注</label><hr class="rule"><h2 class="section-heading">新跳线默认余量</h2><div class="field-grid">${numberField("default-start", "起点", project.defaults.start, 0, 1000, 0.1, "mm")}${numberField("default-end", "终点", project.defaults.end, 0, 1000, 0.1, "mm")}</div><p class="muted">仅应用于之后绘制的跳线，已绘制的跳线可单独修改。</p>${state.tool === "wire" ? `<h2 class="section-heading">跳线颜色</h2>${palette(state.wireColor)}` : ""}<hr class="rule"><div class="data-row"><span>元件 / 锡线 / 跳线</span><strong>${["component", "solder", "wire"].map((t) => project.objects.filter((o) => o.type === t).length).join(" / ")}</strong></div>`;
+    root.innerHTML = `<h2 class="section-heading">洞洞板 <small>独立焊盘</small></h2><div class="field-grid">${numberField("cols", "列数", project.board.cols, 2, 100)}${numberField("rows", "行数", project.board.rows, 2, 100)}</div><div class="info-box">${((project.board.cols - 1) * PITCH).toFixed(2)} × ${((project.board.rows - 1) * PITCH).toFixed(2)} mm<br>首末孔中心距 · 固定孔距 2.54 mm</div><hr class="rule"><h2 class="section-heading">视图显示</h2><label class="check"><input id="ghost" type="checkbox" ${state.showGhost ? "checked" : ""}>显示另一面参考</label><label class="check"><input id="labels" type="checkbox" ${state.showLabels ? "checked" : ""}>显示引脚标注</label><hr class="rule"><h2 class="section-heading">新跳线默认余量</h2><div class="field-grid">${numberField("default-start", "起点", project.defaults.start, 0, 1000, 0.1, "mm")}${numberField("default-end", "终点", project.defaults.end, 0, 1000, 0.1, "mm")}</div><p class="muted">仅应用于之后绘制的跳线，已绘制的跳线可单独修改。</p>${state.tool === "wire" ? `<h2 class="section-heading">跳线颜色</h2>${palette(state.wireColor)}` : ""}<hr class="rule"><div class="data-row"><span>元件 / 锡线 / 跳线</span><strong>${["component", "solder", "wire"].map((t) => project.objects.filter((o) => o.type === t).length).join(" / ")}</strong></div>`;
     for (const key of ["cols", "rows"])
       bindNumber("#" + key, (n) => {
         const board = { ...project.board, [key]: n };
@@ -1588,8 +1589,9 @@ canvas.addEventListener("pointermove", (e) => {
   const p = eventPoint(e),
     v = gesture?.view ?? viewAt(p),
     g = pointerGrid(p, v, usesHalfGrid());
-  state.hover = inBoard(g, project.board) ? g : null;
-  $("#hole-position").textContent = state.hover ? holeName(g) : "—";
+  state.hover = state.tool === "logic" ? logicalPinAt(project, p, v, state.camera)?.point ?? null
+    : inBoard(g, project.board) ? g : null;
+  $("#hole-position").textContent = state.hover ? holeName(state.hover) : "—";
   if (gesture) {
     const d = gesture;
     if (d.kind === "pan") {
@@ -2012,10 +2014,7 @@ function focusCheck(issue) {
   refresh();
 }
 function pickLogicalPin(point, view) {
-  const candidates = terminals(project).filter((t) => objectFace(t.object) === view.face)
-    .map((t) => { const p = toScreen(t.point, project.board, view, state.camera); return { ...t, distance: Math.hypot(p.x - point.x, p.y - point.y) }; })
-    .filter((t) => t.distance < 10).sort((a, b) => a.distance - b.distance);
-  const target = candidates[0];
+  const target = logicalPinAt(project, point, view, state.camera);
   if (!target) { toast("请点击元件引脚，逻辑连接不绑定空焊盘或跳线端点"); return; }
   if (target.pin.nc) { toast("该引脚已声明 NC，请先在属性中取消 NC"); return; }
   if (!state.logicalStart) {
