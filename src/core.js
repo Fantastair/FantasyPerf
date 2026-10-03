@@ -7,9 +7,9 @@ export const FORMAT = "FantasyPerf";
 //   大版本：数据含义不兼容的重构，正常情况下保持稳定；
 //   中版本：新增功能带来的向后兼容扩展，旧文件自动升级；
 //   小版本：仅修复，不改变数据含义，同中版本内互相兼容。
-export const FORMAT_VERSION = "1.3.0";
+export const FORMAT_VERSION = "1.4.0";
 // 生成文件的工具版本，与 package.json 保持一致（由单元测试看住）。
-export const APP_VERSION = "1.3.0";
+export const APP_VERSION = "1.4.0";
 export const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 // 早期的整数版本号：1 等同于 1.0.0；2 是引入 meta 的那次改动，等同于 1.1.0。
 const LEGACY_VERSIONS = { 1: "1.0.0", 2: "1.1.0" };
@@ -32,6 +32,7 @@ export const uid = () => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
 export const same = (a, b) => a.x === b.x && a.y === b.y;
+export const isHole = (p) => Number.isInteger(p.x) && Number.isInteger(p.y);
 export const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 export function columnName(index) {
   let s = "";
@@ -39,7 +40,7 @@ export function columnName(index) {
     s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
   return s;
 }
-export const holeName = (p) => `${columnName(p.x)}${p.y + 1}`;
+export const holeName = (p) => isHole(p) ? `${columnName(p.x)}${p.y + 1}` : `列 ${p.x + 1} · 行 ${p.y + 1}`;
 // 升级步骤按起始版本登记，逐级执行，因此任何旧文件都能升到当前版本。
 // 每一步只补全或翻译字段，不改变已有数据的含义。
 const FORMAT_MIGRATIONS = {
@@ -55,6 +56,8 @@ const FORMAT_MIGRATIONS = {
   "1.1.0": { to: "1.2.0", migrate: (data) => ({ ...data }) },
   // 1.2.0 → 1.3.0: optional collision rules and per-pin connection intent.
   "1.2.0": { to: "1.3.0", migrate: (data) => ({ ...data }) },
+  // 1.3.0 → 1.4.0: orthogonal jumper bends may use the half-hole grid.
+  "1.3.0": { to: "1.4.0", migrate: (data) => ({ ...data }) },
 };
 // 版本号解析：接受三段式字符串，也接受早期的整数版本。
 export function parseVersion(value) {
@@ -180,7 +183,7 @@ export function bounds(objects) {
     : null;
 }
 export function inBoard(p, board) {
-  return p.x >= 0 && p.y >= 0 && p.x < board.cols && p.y < board.rows;
+  return p.x >= 0 && p.y >= 0 && p.x <= board.cols - 1 && p.y <= board.rows - 1;
 }
 export function fits(objects, board) {
   return objects.every(
@@ -247,7 +250,7 @@ export function lengthMM(points) {
 }
 export const cutLength = (wire) =>
   lengthMM(wire.points) + wire.allowanceStart + wire.allowanceEnd;
-export function editVertex(points, index, target, orth = true) {
+export function editVertex(points, index, target, orth = true, holeEnds = false) {
   const p = clone(points);
   if (!orth) {
     p[index] = { ...target };
@@ -263,6 +266,21 @@ export function editVertex(points, index, target, orth = true) {
     }
   }
   p[index] = { ...target };
+  // A half-grid bend must not drag a jumper's insertion ends between holes.
+  if (holeEnds) {
+    if (!isHole(p[0])) {
+      p[0] = { ...points[0] };
+      const bend = points[0].x === points[1].x
+        ? { x: p[1].x, y: p[0].y } : { x: p[0].x, y: p[1].y };
+      p.splice(1, 0, bend);
+    }
+    if (!isHole(p.at(-1))) {
+      const end = { ...points.at(-1) }, prev = p.at(-2);
+      const bend = points.at(-1).x === points.at(-2).x
+        ? { x: prev.x, y: end.y } : { x: end.x, y: prev.y };
+      p.splice(p.length - 1, 1, bend, end);
+    }
+  }
   return p;
 }
 export function distanceToSegment(p, a, b) {
@@ -322,7 +340,7 @@ export function regularPins(kind, count = 8, spacing = 1, gap = 3) {
           x: i < half ? 0 : gap,
           y: (i < half ? i : count - 1 - i) * spacing,
           label: String(i + 1),
-          labelDx: i < half ? -0.45 : 0.45,
+          labelDx: 0,
           labelDy: 0,
         }
       : {
@@ -330,7 +348,7 @@ export function regularPins(kind, count = 8, spacing = 1, gap = 3) {
           y: 0,
           label: String(i + 1),
           labelDx: 0,
-          labelDy: -0.55,
+          labelDy: 0,
         };
   });
 }
@@ -437,7 +455,7 @@ export function validateProject(raw) {
             !int(p.y, -99, 99) ||
             !str(p.label, 100) ||
             !num(p.labelDx ?? 0, -100, 100) ||
-            !num(p.labelDy ?? -0.55, -100, 100)
+            !num(p.labelDy ?? 0, -100, 100)
           )
             fail("引脚数据无效");
           const k = `${p.x},${p.y}`;
@@ -452,7 +470,7 @@ export function validateProject(raw) {
             y: p.y,
             label: p.label,
             labelDx: p.labelDx ?? 0,
-            labelDy: p.labelDy ?? -0.55,
+            labelDy: p.labelDy ?? 0,
           };
         }),
       };
@@ -480,11 +498,15 @@ export function validateProject(raw) {
         !Array.isArray(o.points) ||
         o.points.length < 2 ||
         o.points.length > 2000 ||
-        !o.points.every((p) => p && int(p.x, 0, 99) && int(p.y, 0, 99))
+        !o.points.every((p) => p && num(p.x, 0, 99) && num(p.y, 0, 99) &&
+          (o.type === "wire" && o.mode === "orthogonal"
+            ? Number.isInteger(p.x * 2) && Number.isInteger(p.y * 2)
+            : isHole(p)))
       )
         fail("线路坐标无效");
       v.points = o.points.map((p) => ({ x: p.x, y: p.y }));
       if (o.type === "wire") {
+        if (!isHole(o.points[0]) || !isHole(o.points.at(-1))) fail("跳线两端必须位于整数孔位");
         if (
           !["direct", "orthogonal"].includes(o.mode) ||
           !/^#[0-9a-f]{6}$/i.test(o.color) ||

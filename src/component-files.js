@@ -5,7 +5,7 @@ import {
 
 export const COMPONENT_FORMAT = "FantasyPerfComponents";
 // Independent of the project format version; follows the same compatibility rules.
-export const COMPONENT_VERSION = "1.3.0";
+export const COMPONENT_VERSION = "1.4.0";
 const COMPONENT_MIGRATIONS = {
   "1.0.0": {
     to: "1.1.0",
@@ -20,6 +20,7 @@ const COMPONENT_MIGRATIONS = {
   },
   "1.1.0": { to: "1.2.0", migrate: (data) => ({ ...data }) },
   "1.2.0": { to: "1.3.0", migrate: (data) => ({ ...data }) },
+  "1.3.0": { to: "1.4.0", migrate: (data) => ({ ...data }) },
 };
 
 export function parseComponentVersion(value) {

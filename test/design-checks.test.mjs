@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { newProject, validateProject, clone, pinPosition, FORMAT_VERSION, moveObjects } from "../src/core.js";
+import { newProject, validateProject, clone, pinPosition, FORMAT_VERSION, moveObjects, editVertex, cleanPath, isHole, regularPins } from "../src/core.js";
 import { createComponentFile, parseComponentFile, COMPONENT_VERSION } from "../src/component-files.js";
 import { instantiateLibraryItem } from "../src/library.js";
-import { collisionIssues, firstNewCollision, analyzeConnections, declarationStatus, shellBounds } from "../src/design-checks.js";
+import { collisionIssues, firstNewCollision, analyzeConnections, declarationStatus, shellBounds, pendingLogicalConnections } from "../src/design-checks.js";
 const component = (id, x, y, pins = [{ x: 0, y: 0, label: "", net: "A" }], extra = {}) =>
   ({ id, type: "component", name: id, x, y, rotation: 0, pins: pins.map((p) => ({ labelDx: 0, labelDy: -0.55, ...p })), ...extra });
 const wire = (id, points, extra = {}) => ({ id, type: "wire", name: id, points, mode: "direct", color: "#3b8bc2", allowanceStart: 3, allowanceEnd: 3, ...extra });
@@ -145,4 +145,68 @@ test("损坏的外壳、豁免、重复身份及相互冲突的引脚声明被�
     (o) => { o.pins[0].nc = true; }, (o) => { o.pins[0].net = " "; }, (o) => { o.pins[0].net = "N".repeat(81); },
     (o) => { o.pins[1].id = "a"; },
   ]) { const bad = clone(p); mutate(bad.objects[0]); assert.throws(() => validateProject(bad)); }
+});
+
+test("占孔提示不掩盖需要阻止的新外壳碰撞", () => {
+  const old = project(component("a", 2, 2), component("b", 6, 2));
+  const next = clone(old); next.objects[1].x = 2;
+  assert.equal(firstNewCollision(old, next, { includeHoles: false }), null);
+  for (const p of [old, next]) p.objects.forEach((o) => { o.shell = { enabled: true, x: -0.4, y: -0.4, w: 0.8, h: 0.8 }; });
+  assert.equal(firstNewCollision(old, next, { includeHoles: false }).kind, "shell");
+});
+test("跳线自动与正面外壳比较，直连斜线和半格折线都检测，跨线及不同面允许", () => {
+  const a = component("a", 5, 5, undefined, { shell: { enabled: true, x: -0.4, y: -0.4, w: 0.8, h: 0.8 } });
+  const w = wire("w", [{ x: 2, y: 2 }, { x: 8, y: 8 }]);
+  assert.equal(collisionIssues(project(a, w))[0].kind, "shell-wire");
+  w.mode = "orthogonal"; w.points = [{ x: 2, y: 5 }, { x: 2, y: 4.5 }, { x: 8, y: 4.5 }, { x: 8, y: 5 }];
+  assert.equal(collisionIssues(project(a, w)).length, 0);
+  a.shell.y = -0.45; // the jumper body extends 0.07 pitches from its centerline
+  assert.equal(collisionIssues(project(a, w))[0].kind, "shell-wire");
+  a.mounting = "smd"; assert.equal(collisionIssues(project(a, w)).length, 0);
+  a.mounting = undefined; w.ignoreCollision = true; assert.equal(collisionIssues(project(a, w)).length, 0);
+  w.ignoreCollision = false; a.shell.enabled = false; assert.equal(collisionIssues(project(a, w)).length, 0);
+  assert.equal(collisionIssues(project(w, wire("w2", [{ x: 5, y: 1 }, { x: 5, y: 9 }]))).length, 0);
+});
+test("直角跳线半格中间点可往返，端点、直连和锡线仍要求整数孔位", () => {
+  const w = wire("w", [{ x: 2, y: 2 }, { x: 2, y: 2.5 }, { x: 8, y: 2.5 }, { x: 8, y: 6 }], { mode: "orthogonal" });
+  assert.deepEqual(validateProject(project(w)).objects[0], w);
+  for (const mutate of [
+    (w) => { w.points[0].y = 1.5; }, (w) => { w.points.at(-1).y = 6.5; },
+    (w) => { w.points[1].y = w.points[2].y = 2.25; },
+    (w) => { w.type = "solder"; },
+    (w) => { w.mode = "direct"; w.points = [{ x: 2, y: 2 }, { x: 8, y: 6.5 }]; },
+    (w) => { w.points = [{ x: 2, y: 2 }, { x: 19.5, y: 2 }, { x: 19.5, y: 6 }, { x: 8, y: 6 }]; },
+  ]) { const bad = clone(w); mutate(bad); assert.throws(() => validateProject(project(bad))); }
+  const p = project(component("a", 2, 2), component("b", 8, 6), component("middle", 5, 3, [{ x: 0, y: 0, label: "", net: "B" }]), w);
+  assert.deepEqual(kinds(p), []);
+});
+test("半格折点编辑保留真实插孔端点，自动补齐直角连接且可保存", () => {
+  const points = [{ x: 2, y: 2 }, { x: 2, y: 3 }, { x: 8, y: 3 }, { x: 8, y: 6 }];
+  for (const [index, target] of [[1, { x: 2.5, y: 3.5 }], [2, { x: 8.5, y: 3.5 }]]) {
+    const changed = cleanPath(editVertex(points, index, target, true, true));
+    assert.deepEqual(changed[0], points[0]); assert.deepEqual(changed.at(-1), points.at(-1));
+    assert.ok(changed.some((p) => p.x === target.x && p.y === target.y));
+    assert.ok(changed.every((p, i) => !i || p.x === changed[i - 1].x || p.y === changed[i - 1].y));
+    assert.ok(isHole(changed[0]) && isHole(changed.at(-1)));
+    assert.doesNotThrow(() => validateProject(project(wire("w", changed, { mode: "orthogonal" }))));
+  }
+});
+test("逻辑显示按实际连通部分合并，局部连接隐藏局部虚线，完整声明不是前提", () => {
+  const p = project(component("a", 2, 2), component("b", 6, 2), component("c", 9, 2),
+    component("unknown", 2, 9, [{ x: 0, y: 0, label: "" }]));
+  assert.equal(declarationStatus(p).enabled, false);
+  assert.equal(pendingLogicalConnections(p).length, 2);
+  p.objects.push(solder("s", [{ x: 2, y: 2 }, { x: 6, y: 2 }]));
+  assert.deepEqual(pendingLogicalConnections(p), [{ net: "A", from: { x: 2, y: 2 }, to: { x: 9, y: 2 } }]);
+  p.objects.push(wire("w", [{ x: 6, y: 2 }, { x: 9, y: 2 }]));
+  assert.equal(pendingLogicalConnections(p).length, 0);
+  p.objects.pop(); assert.equal(pendingLogicalConnections(p).length, 1);
+  assert.ok(p.objects.slice(0, 3).every((o) => o.pins[0].net === "A"));
+});
+test("新引脚的标注偏移默认居中，已有显式偏移仍保留", () => {
+  assert.ok(regularPins("double", 8).every((p) => p.labelDx === 0 && p.labelDy === 0));
+  assert.ok(regularPins("single", 3).every((p) => p.labelDx === 0 && p.labelDy === 0));
+  const a = component("a", 2, 2, [{ x: 0, y: 0, label: "A", labelDx: 1.5, labelDy: -2 }]);
+  const p = project(a); p.version = "1.3.0";
+  assert.deepEqual(validateProject(p).objects[0].pins[0], a.pins[0]);
 });

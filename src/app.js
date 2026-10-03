@@ -20,6 +20,7 @@ import {
   clone,
   uid,
   same,
+  isHole,
   clamp,
   holeName,
   newProject,
@@ -204,7 +205,7 @@ function commit(fn, options) {
   if (readOnly) return;
   const before = clone(project);
   fn();
-  const conflict = !options?.allowConflicts && firstNewCollision(before, project);
+  const conflict = !options?.allowConflicts && firstNewCollision(before, project, { includeHoles: false });
   if (conflict) {
     project = before;
     toast(conflict.message + "。可为特殊安装勾选忽略碰撞。");
@@ -301,6 +302,7 @@ function zoom(factor, anchor) {
   requestDraw();
 }
 function refresh({ preserveInspector = false } = {}) {
+  $("#app-version").textContent = `v${APP_VERSION}`;
   state.readOnly = readOnly;
   $("#project-name").readOnly = readOnly;
   if (readOnly) $("#save-status").textContent = "只读查看";
@@ -375,7 +377,7 @@ function updateHint() {
     wire:
       state.wireMode === "direct"
         ? "点击起点和终点 · 右键 / Esc 取消"
-        : "点击添加折点 · Tab 切换拐弯 · Enter / 双击完成 · 右键退出",
+        : "中间路径半格吸附，两端落在焊盘 · Tab 换向 · Enter / 双击完成",
   };
   $("#status-hint").textContent = hints[state.tool];
 }
@@ -487,7 +489,7 @@ function renderInspector() {
     const pads = objectPoints(o);
     root.insertAdjacentHTML(
       "beforeend",
-      `<div class="info-box">0603 / 0805 贴片电阻、电容示意。跨接两个相邻焊盘，不区分封装尺寸。</div><div class="data-row"><span>焊盘位置</span><strong>${holeName(pads[0])} ↔ ${holeName(pads[1])}</strong></div><div class="data-row"><span>旋转</span><strong>${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑元件</button></div><p class="muted">拖动元件移动 · R 旋转；名称可独立拖动并按半格吸附，可填写阻值或容值。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
+      `<div class="info-box">0603 / 0805 贴片电阻、电容示意。跨接两个相邻焊盘，不区分封装尺寸。</div><div class="data-row"><span>焊盘位置</span><strong>${holeName(pads[0])} ↔ ${holeName(pads[1])}</strong></div><div class="data-row"><span>旋转</span><strong>${o.rotation}°</strong></div><div class="row-actions"><button data-action="rotate">↻ 旋转 90°</button><button data-action="edit-component">编辑元件</button></div><p class="muted">拖动焊盘端移动元件 · R 旋转；名称默认居中，可独立拖动并按半格吸附，可填写阻值或容值。</p><button class="wide" data-action="export-component">导出元件文件</button>`,
     );
   } else if (o.type === "component") {
     root.insertAdjacentHTML(
@@ -850,7 +852,7 @@ function componentDialog(existing = null) {
                   y,
                   label: "",
                   labelDx: 0,
-                  labelDy: -0.55,
+                  labelDy: 0,
                 });
               update();
             }),
@@ -1060,7 +1062,7 @@ function helpDialog() {
       .map(([l, k]) => `<span>${l}</span><kbd>${k}</kbd>`)
       .join(
         "",
-      )}</div><hr class="rule"><p class="muted">线路绑定孔位。单独移动元件时，线路保持原位；一起框选则一起移动。选中线路后可拖动折点；名称和引脚标注可独立拖动，按半格吸附，仅选中元件时显示指示连线。右键取消当前工具并返回选择。重复点击重叠对象可轮换选择。</p><p class="muted">自动保存仅在当前浏览器生效，请定期导出完整项目。校验页检查占孔与外壳冲突；全部引脚声明连接组或 NC 后检查漏接和误短接。忽略碰撞只豁免物理检查，不改变实际连接关系。</p>`,
+      )}</div><hr class="rule"><p class="muted">线路绑定孔位。单独移动元件时，线路保持原位；一起框选则一起移动。选中线路后可拖动折点；直角跳线中间路径可半格吸附，首末端必须落在焊盘。名称默认居于元件中心，引脚标注默认居于引脚中心；拖动标注可调整位置，按半格吸附。右键取消当前工具并返回选择。重复点击重叠对象可轮换选择。</p><p class="muted">自动保存仅在当前浏览器生效，请定期导出完整项目。占孔冲突显示叉号与校验提示，不限制摆放；已启用的外壳检查会阻止新增外壳碰撞，跳线自动参与同面外壳检查。全部引脚声明连接组或 NC 后检查漏接和误短接；已实际连通的逻辑线自动隐藏。忽略碰撞只豁免物理检查。</p>`,
     '<button class="primary" data-close>开始设计</button>',
   );
 }
@@ -1326,6 +1328,16 @@ function eventPoint(e) {
   const rect = canvas.getBoundingClientRect();
   return { x: e.clientX - rect.left, y: e.clientY - rect.top };
 }
+function pointerGrid(p, v, half = false) {
+  const point = fromScreen(p, project.board, v, state.camera, false), factor = half ? 2 : 1;
+  return { x: Math.round(point.x * factor) / factor, y: Math.round(point.y * factor) / factor };
+}
+function usesHalfGrid() {
+  if (state.draft?.type === "wire" && state.wireMode === "orthogonal") return true;
+  if (gesture?.kind !== "vertex") return false;
+  const o = gesture.before.objects.find((o) => o.id === gesture.id);
+  return o.type === "wire" && o.mode === "orthogonal" && gesture.index > 0 && gesture.index < o.points.length - 1;
+}
 function activeOn(o, face) {
   return editableOnFace(o, face, state);
 }
@@ -1397,6 +1409,10 @@ function finishDraft() {
     toast("请至少指定两个不同的孔位");
     return;
   }
+  if (d.type === "wire" && (!isHole(points[0]) || !isHole(points.at(-1)))) {
+    toast("跳线两端必须落在焊盘，请继续选择整数孔位作为终点");
+    return;
+  }
   const o = {
     id: uid(),
     type: d.type,
@@ -1431,7 +1447,7 @@ canvas.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   const p = eventPoint(e),
     v = viewAt(p),
-    grid = fromScreen(p, project.board, v, state.camera);
+    grid = pointerGrid(p, v, state.draft?.type === "wire" && state.wireMode === "orthogonal");
   canvas.setPointerCapture(e.pointerId);
   if (e.button === 1 || space) {
     gesture = { kind: "pan", start: p, camera: clone(state.camera) };
@@ -1571,7 +1587,7 @@ canvas.addEventListener("pointermove", (e) => {
   if (readOnly) return;
   const p = eventPoint(e),
     v = gesture?.view ?? viewAt(p),
-    g = fromScreen(p, project.board, v, state.camera);
+    g = pointerGrid(p, v, usesHalfGrid());
   state.hover = inBoard(g, project.board) ? g : null;
   $("#hole-position").textContent = state.hover ? holeName(g) : "—";
   if (gesture) {
@@ -1605,6 +1621,7 @@ canvas.addEventListener("pointermove", (e) => {
         d.index,
         target,
         original.type === "solder" || original.mode === "orthogonal",
+        original.type === "wire" && original.mode === "orthogonal",
       );
       if (points.every((p) => inBoard(p, project.board))) {
         project = clone(d.before);
@@ -1690,7 +1707,7 @@ function endGesture() {
         return;
       }
     }
-    const conflict = firstNewCollision(d.before, project);
+    const conflict = firstNewCollision(d.before, project, { includeHoles: false });
     if (conflict) {
       project = d.before;
       toast(conflict.message + "，本次移动已取消");
@@ -1932,7 +1949,7 @@ function renderDesignProperties(root, o) {
   $("#ignore-collision").onchange = (e) => commit(() => { o.ignoreCollision = e.target.checked; }, { allowConflicts: true });
   if (o.type !== "component") return;
   const shell = o.shell ?? defaultShell(o);
-  root.insertAdjacentHTML("beforeend", `<label class="check"><input id="shell-enabled" type="checkbox" ${o.shell?.enabled ? "checked" : ""}>开启外壳碰撞</label><p class="muted">边界相对元件基准孔，单位为孔距；随元件旋转。仅与同面的已启用外壳比较；焊盘面还检查锡线穿过外壳。</p>${o.shell?.enabled ? `<div class="field-grid">${numberField("shell-x", "外壳左边界", shell.x, -100, 100, 0.05)}${numberField("shell-y", "外壳上边界", shell.y, -100, 100, 0.05)}${numberField("shell-w", "外壳宽度", shell.w, 0.1, 200, 0.05)}${numberField("shell-h", "外壳高度", shell.h, 0.1, 200, 0.05)}</div>` : ""}`);
+  root.insertAdjacentHTML("beforeend", `<label class="check"><input id="shell-enabled" type="checkbox" ${o.shell?.enabled ? "checked" : ""}>开启外壳碰撞</label><p class="muted">边界相对元件基准孔，单位为孔距；随元件旋转。同面已启用外壳检查重叠，元件面自动检查跳线，焊盘面检查锡线穿过外壳。</p>${o.shell?.enabled ? `<div class="field-grid">${numberField("shell-x", "外壳左边界", shell.x, -100, 100, 0.05)}${numberField("shell-y", "外壳上边界", shell.y, -100, 100, 0.05)}${numberField("shell-w", "外壳宽度", shell.w, 0.1, 200, 0.05)}${numberField("shell-h", "外壳高度", shell.h, 0.1, 200, 0.05)}</div>` : ""}`);
   $("#shell-enabled").onchange = (e) => commit(() => { o.shell = { ...shell, enabled: e.target.checked }; }, { allowConflicts: true });
   for (const key of ["x", "y", "w", "h"])
     bindNumber(`#shell-${key}`, (n) => commit(() => { o.shell[key] = n; }, { allowConflicts: true }));

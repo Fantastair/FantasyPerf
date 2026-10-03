@@ -26,14 +26,29 @@ export function shellBounds(o) {
 }
 const overlaps = (a, b) => a && b && a.minX < b.maxX - 1e-8 && b.minX < a.maxX - 1e-8 &&
   a.minY < b.maxY - 1e-8 && b.minY < a.maxY - 1e-8;
-function solderHitsShell(o, box) {
-  return o.points.some((b, i) => {
-    if (!i) return false;
-    const a = o.points[i - 1];
-    return a.y === b.y
-      ? a.y > box.minY && a.y < box.maxY && Math.min(a.x, b.x) < box.maxX && Math.max(a.x, b.x) > box.minX
-      : a.x > box.minX && a.x < box.maxX && Math.min(a.y, b.y) < box.maxY && Math.max(a.y, b.y) > box.minY;
-  });
+function pathShellContact(o, box) {
+  // Jumper width follows its schematic body (about 0.14 hole pitches).
+  const radius = o.type === "wire" ? 0.07 : 0;
+  for (let i = 1; i < o.points.length; i++) {
+    const a = o.points[i - 1], b = o.points[i];
+    let lo = 0, hi = 1;
+    for (const axis of ["x", "y"]) {
+      const min = box[axis === "x" ? "minX" : "minY"] - radius;
+      const max = box[axis === "x" ? "maxX" : "maxY"] + radius;
+      const d = b[axis] - a[axis];
+      if (!d) {
+        if (a[axis] <= min + 1e-8 || a[axis] >= max - 1e-8) { hi = -1; break; }
+      } else {
+        const p = (min - a[axis]) / d, q = (max - a[axis]) / d;
+        lo = Math.max(lo, Math.min(p, q)); hi = Math.min(hi, Math.max(p, q));
+      }
+    }
+    if (hi > lo + 1e-8) {
+      const t = (lo + hi) / 2;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+  }
+  return null;
 }
 function occupancy(project) {
   const cells = new Map();
@@ -69,16 +84,18 @@ export function collisionIssues(project, { limit = 200, accept = () => true } = 
       if (add({ kind: "shell", key: `shell:${[a.o.id, b.o.id].sort().join("/")}`, ids: [a.o.id, b.o.id],
         points: [objectPoints(a.o)[0], objectPoints(b.o)[0]], message: `${a.o.name} 与 ${b.o.name} 外壳重叠` })) return issues;
     }
-    if (objectFace(a.o) !== "back") continue;
+    const pathType = objectFace(a.o) === "back" ? "solder" : "wire";
     for (const b of project.objects) {
-      if (b.type !== "solder" || b.ignoreCollision || !solderHitsShell(b, a.box)) continue;
-      if (add({ kind: "shell-solder", key: `shell-solder:${a.o.id}/${b.id}`, ids: [a.o.id, b.id],
-        points: [objectPoints(a.o)[0]], message: `${b.name} 穿过 ${a.o.name} 的外壳` })) return issues;
+      if (b.type !== pathType || b.ignoreCollision) continue;
+      const contact = pathShellContact(b, a.box);
+      if (!contact) continue;
+      if (add({ kind: `shell-${pathType}`, key: `shell-${pathType}:${a.o.id}/${b.id}`, ids: [a.o.id, b.id],
+        points: [contact], message: `${b.name} 与 ${a.o.name} 的外壳碰撞` })) return issues;
     }
   }
   return issues;
 }
-export function firstNewCollision(before, after) {
+export function firstNewCollision(before, after, { includeHoles = true } = {}) {
   const previous = new Map(before.objects.map((o) => [o.id, o]));
   const footprint = (o) => JSON.stringify([o.type, o.mounting, o.x, o.y, o.rotation,
     o.pins?.map((p) => [p.x, p.y]), o.points, !!o.ignoreCollision, o.shell?.enabled ? o.shell : null]);
@@ -92,7 +109,7 @@ export function firstNewCollision(before, after) {
     }
     return result;
   };
-  const oldCells = cellsByObject(before), newCells = cellsByObject(after);
+  const oldCells = includeHoles ? cellsByObject(before) : null, newCells = includeHoles ? cellsByObject(after) : null;
   const commonCount = (cells, a, b) => {
     const x = cells.get(a), y = cells.get(b);
     if (!x || !y) return 0;
@@ -110,15 +127,14 @@ export function firstNewCollision(before, after) {
     const [a, b] = issue.ids.map((id) => previous.get(id));
     if (!a || !b || a.ignoreCollision || b.ignoreCollision) return false;
     return issue.kind === "shell" ? objectFace(a) === objectFace(b) && overlaps(shellBounds(a), shellBounds(b))
-      : a.shell?.enabled && solderHitsShell(b, shellBounds(a));
+      : a.shell?.enabled && !!pathShellContact(b, shellBounds(a));
   };
-  return collisionIssues(after, { limit: 1, accept: (issue) => !existed(issue) })[0] ?? null;
+  return collisionIssues(after, { limit: 1, accept: (issue) =>
+    (includeHoles || issue.kind !== "hole") && !existed(issue) })[0] ?? null;
 }
 
-export function analyzeConnections(project) {
-  const status = declarationStatus(project);
-  if (!status.enabled) return { ...status, errors: [], warnings: [] };
-  const pins = terminals(project), parent = new Map(), touched = new Set();
+export function connectionGraph(project) {
+  const parent = new Map(), touched = new Set();
   const root = (k) => {
     if (!parent.has(k)) parent.set(k, k);
     let r = k;
@@ -143,6 +159,29 @@ export function analyzeConnections(project) {
       }
     }
   }
+  return { root, touched };
+}
+
+// Display one logical link per remaining electrical island, even before all pins are declared.
+export function pendingLogicalConnections(project) {
+  const { root } = connectionGraph(project), nets = new Map(), links = [];
+  for (const t of terminals(project)) {
+    if (!t.pin.net) continue;
+    if (!nets.has(t.pin.net)) nets.set(t.pin.net, new Map());
+    const groups = nets.get(t.pin.net), r = root(key(t.point));
+    if (!groups.has(r)) groups.set(r, t);
+  }
+  for (const [net, groups] of nets) {
+    const [first, ...rest] = groups.values();
+    for (const t of rest) links.push({ net, from: first.point, to: t.point });
+  }
+  return links;
+}
+
+export function analyzeConnections(project) {
+  const status = declarationStatus(project);
+  if (!status.enabled) return { ...status, errors: [], warnings: [] };
+  const pins = terminals(project), { root, touched } = connectionGraph(project);
   // Component pins, including SMD resistor/capacitor ends, are NEVER joined internally.
   const actual = new Map(), nets = new Map();
   for (const t of pins) {

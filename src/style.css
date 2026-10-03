@@ -103,11 +103,11 @@ small {
   color: var(--muted);
 }
 .header {
-  height: 76px;
+  height: 64px;
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 0 24px;
+  gap: 12px;
+  padding: 0 16px;
   background: white;
   border-bottom: 1px solid var(--border);
 }
@@ -117,7 +117,7 @@ small {
   gap: 11px;
   text-decoration: none;
   color: #173b39;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 750;
   letter-spacing: -0.5px;
 }
@@ -127,7 +127,7 @@ small {
 .brand small {
   display: block;
   font-size: 10px;
-  letter-spacing: 2px;
+  letter-spacing: 0.5px;
   font-weight: 500;
   margin-top: 2px;
   color: #7f9397;
@@ -151,7 +151,10 @@ small {
 }
 .header #project-name {
   font-size: 15px;
-  width: 200px;
+  width: 150px;
+  flex: 1;
+  max-width: 180px;
+  min-width: 90px;
   border-color: transparent;
   padding-left: 0;
   font-weight: 600;
@@ -162,33 +165,31 @@ small {
 .save-status {
   font-size: 12px;
   color: #84918f;
+  margin-left: auto;
+  white-space: nowrap;
 }
+footer #status-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+footer #summary { flex: none; }
 .file-actions {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  align-items: center;
 }
 .file-actions .primary {
-  margin-left: 8px;
-  min-width: 90px;
-}
-.file-actions .primary span {
-  margin-left: 16px;
-}
-.commandbar {
-  height: 58px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: white;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border);
-  gap: 12px;
+  min-width: 76px;
 }
 .history {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  flex: none;
 }
 .history button {
   font-size: 22px;
@@ -230,7 +231,7 @@ small {
   margin-left: 6px;
 }
 .workspace {
-  height: calc(100vh - 169px);
+  height: calc(100vh - 99px);
   display: flex;
 }
 .tools {
@@ -797,8 +798,8 @@ dialog::backdrop {
     width: 260px;
   }
   .header {
-    gap: 12px;
-    padding: 0 18px;
+    gap: 8px;
+    padding: 0 12px;
   }
   .save-status {
     display: none;
@@ -810,8 +811,13 @@ dialog::backdrop {
     font-size: 11px;
   }
   .segmented button {
-    padding: 7px 11px;
+    padding: 7px 9px;
   }
+  .header .segmented small { display: none; }
+  .header .brand { font-size: 16px; gap: 7px; }
+  .header .brand-icon { width: 28px; height: 28px; font-size: 27px; }
+  .header #theme-mode { width: 96px; }
+  .header .file-actions button { padding: 8px; }
   .empty-tip {
     max-width: 365px;
   }
@@ -898,7 +904,6 @@ dialog::backdrop {
   --muted: #9bafbb;
 }
 [data-theme="dark"] .header,
-[data-theme="dark"] .commandbar,
 [data-theme="dark"] .tools,
 [data-theme="dark"] .inspector,
 [data-theme="dark"] footer {
@@ -1135,7 +1140,7 @@ dialog::backdrop {
   height: 100dvh;
 }
 [data-readonly="true"] .header {
-  height: 100px;
+  height: 140px;
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px 12px;
@@ -1145,8 +1150,9 @@ dialog::backdrop {
   gap: 7px;
 }
 [data-readonly="true"] .brand small {
-  display: none;
+  display: block;
 }
+[data-readonly="true"] .brand-tagline { display: none; }
 [data-readonly="true"] .brand-icon {
   width: 28px;
   height: 28px;
@@ -1169,6 +1175,8 @@ dialog::backdrop {
 [data-readonly="true"] #project-name {
   order: 3;
   width: 100%;
+  flex: 0 0 100%;
+  max-width: none;
   height: 30px;
   padding: 4px 0;
   font-size: 14px;
@@ -1185,12 +1193,9 @@ dialog::backdrop {
 [data-readonly="true"] .file-actions button {
   padding: 10px;
 }
-[data-readonly="true"] .commandbar {
-  height: 50px;
-  padding: 5px 10px;
-  justify-content: center;
-}
 [data-readonly="true"] .segmented {
+  order: 4;
+  flex: none;
   width: 100%;
   justify-content: center;
 }
@@ -1203,8 +1208,9 @@ dialog::backdrop {
   display: none;
 }
 [data-readonly="true"] .workspace {
-  height: calc(100dvh - 180px);
+  height: calc(100dvh - 170px);
 }
+[data-readonly="true"] #summary { display: none; }
 [data-readonly="true"] .stage {
   width: 100%;
   min-width: 0;

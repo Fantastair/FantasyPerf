@@ -21,33 +21,16 @@
         ><span class="brand-icon">⠿</span
         ><span
           >Fantasy<span class="brand-light">Perf</span
-          ><small>洞洞板工作台</small></span
+          ><small><span class="brand-tagline">洞洞板工作台 · </span><span id="app-version"></span></small></span
         ></a
       >
-      <span class="divider"></span
-      ><input
+      <input
         id="project-name"
         aria-label="项目名称"
         value="未命名项目"
         maxlength="100"
-      /><span id="save-status" class="save-status" role="status"
-        >本机自动保存</span
-      >
-      <nav class="file-actions" aria-label="项目操作">
-        <select id="theme-mode" aria-label="外观模式" title="外观模式">
-          <option value="system">跟随系统</option>
-          <option value="light">浅色模式</option>
-          <option value="dark">深色模式</option>
-        </select>
-        <button data-action="new">新建</button
-        ><button data-action="open">打开</button
-        ><button data-action="export" class="primary">
-          导出 <span>↗</span>
-        </button>
-      </nav>
-    </header>
-    <div class="commandbar">
-      <div class="history">
+      />
+      <div class="history" role="group" aria-label="编辑历史">
         <button data-action="undo" title="撤销 · Ctrl / ⌘ Z" aria-label="撤销">
           ↶</button
         ><button
@@ -56,8 +39,7 @@
           aria-label="重做"
         >
           ↷</button
-        ><span class="divider"></span
-        ><span id="summary">30 × 20 孔 · 2.54 mm</span>
+        >
       </div>
       <div class="segmented" role="group" aria-label="板面视图">
         <button data-view="front" class="active">
@@ -65,10 +47,18 @@
         ><button data-view="back">焊盘面 <small>背面</small></button
         ><button data-view="split">并排核对</button>
       </div>
-      <button data-action="help" class="help-button">
-        ? <span>操作指南</span>
-      </button>
-    </div>
+      <nav class="file-actions" aria-label="项目操作">
+        <select id="theme-mode" aria-label="外观模式" title="外观模式">
+          <option value="system">跟随系统</option>
+          <option value="light">浅色模式</option>
+          <option value="dark">深色模式</option>
+        </select>
+        <button data-action="new">新建</button
+        ><button data-action="open">打开</button
+        ><button data-action="export" class="primary">导出 ↗</button>
+        <button data-action="help" class="help-button" title="操作指南" aria-label="操作指南">?</button>
+      </nav>
+    </header>
     <main class="workspace">
       <aside class="tools" aria-label="绘图工具">
         <button data-tool="select" class="tool active" title="选择 · V">
@@ -174,8 +164,9 @@
     <footer>
       <span class="status-dot"></span><span id="status-face">元件面</span
       ><span class="footer-divider">/</span><span id="hole-position">—</span
-      ><span id="status-hint">点击选择 · 拖动框选 · 空格拖动平移</span
-      ><span class="local-label">仅保存在此浏览器</span>
+      ><span id="summary">30 × 20 孔 · 2.54 mm</span>
+      <span id="status-hint">点击选择 · 拖动框选 · 空格拖动平移</span
+      ><span id="save-status" class="save-status" role="status">本机自动保存</span>
     </footer>
     <dialog id="modal"><div id="modal-content"></div></dialog>
     <input

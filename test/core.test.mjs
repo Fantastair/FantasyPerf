@@ -182,7 +182,7 @@ test("项目完整往返及导入拒绝损坏数据", () => {
   }
 });
 test("版本号是三段式，可比较并识别早期整数版本", () => {
-  assert.equal(FORMAT_VERSION, "1.3.0");
+  assert.equal(FORMAT_VERSION, "1.4.0");
   assert.equal(versionMajor(FORMAT_VERSION), 1);
   assert.equal(compareVersions("1.0.0", "1.0.1"), -1);
   assert.equal(compareVersions("1.0.1", "1.1.0"), -1);
@@ -228,7 +228,7 @@ test("旧版本项目自动升级，不兼容版本被拒绝", () => {
   assert.deepEqual(validateProject(numericTwo), current);
   // 小版本只做修复：更高的补丁号按当前版本读取，并归一化版本号。
   const laterPatch = clone(current);
-  laterPatch.version = "1.3.7";
+  laterPatch.version = "1.4.7";
   assert.deepEqual(validateProject(laterPatch), current);
   // 数据步骤之前的小版本号（1.0.3）按同大版本内最近的低版本（1.0.0）升级。
   const legacyPatch = clone(current);
@@ -236,8 +236,8 @@ test("旧版本项目自动升级，不兼容版本被拒绝", () => {
   delete legacyPatch.meta;
   assert.equal(validateProject(legacyPatch).version, FORMAT_VERSION);
   for (const bad of [
-    (p) => (p.version = "1.4.0"),
-    (p) => (p.version = "1.4.5"),
+    (p) => (p.version = "1.5.0"),
+    (p) => (p.version = "1.5.5"),
     (p) => (p.version = "2.0.0"),
     (p) => (p.version = "0.9.0"),
     (p) => (p.version = "1.1"),
@@ -253,7 +253,7 @@ test("旧版本项目自动升级，不兼容版本被拒绝", () => {
     assert.throws(() => validateProject(q));
   }
   assert.throws(
-    () => validateProject({ ...clone(current), version: "1.4.0" }),
+    () => validateProject({ ...clone(current), version: "1.5.0" }),
     /高于当前工具支持/,
   );
   assert.throws(
