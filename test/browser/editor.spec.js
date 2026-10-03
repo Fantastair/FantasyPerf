@@ -354,6 +354,8 @@ test("完整验收：元件、标注、布线、镜像、编辑、撤销、保�
   await clickHole(page, 7, 7, "back");
   await page.keyboard.press("Enter");
   await page.locator('.tools [data-tool="wire"]').click();
+  // This legacy acceptance intentionally shares holes with component pins.
+  await page.locator("#placement-ignore").check();
   await clickHole(page, 10, 5);
   await clickHole(page, 14, 10);
   await page.locator('.tools [data-tool="wire"]').click();
@@ -518,6 +520,9 @@ test("并排框选能跨面整体移动，元件单独移动时线路不变", as
   await page.locator('[data-action="undo"]').click();
   await page.locator('[data-view="front"]').click();
   await clickHole(page, 4, 3, "front", 12, 10);
+  // Moving this chip alone would collide with W1/R1; explicitly use the special-installation exemption.
+  await page.locator("#ignore-collision").check();
+  await page.locator("#board").focus();
   await page.keyboard.press("ArrowRight");
   moved = await saved(page);
   expect(moved.objects[0].x).toBe(original.objects[0].x + 1);
@@ -918,7 +923,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   // 更高的小版本只包含修复，直接打开并归一到当前格式版本。
   const patch = demoProject();
   patch.name = "补丁项目";
-  patch.version = "1.2.9";
+  patch.version = "1.3.9";
   await open("patch.json", patch);
   await expect(page.locator("#modal")).not.toContainText("升级");
   await page.locator("#confirm-import").click();
@@ -929,7 +934,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   const current = await storedOf();
   // 更高的中版本与大版本都被拒绝，当前项目不受影响。
   for (const [file, version, message] of [
-    ["minor.json", "1.3.0", "高于当前工具支持"],
+    ["minor.json", "1.4.0", "高于当前工具支持"],
     ["major.json", "2.0.0", "大版本"],
   ]) {
     const future = demoProject();
@@ -1169,12 +1174,12 @@ test("元件旧文件自动升级，补丁兼容且未来版本不覆盖已导�
     await expect(page.locator("#toast")).toContainText(`升级到 v${COMPONENT_VERSION}`);
     await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");
   }
-  const patch = { ...createComponentFile([item]), version: "1.2.9" };
+  const patch = { ...createComponentFile([item]), version: "1.3.9" };
   await open(patch);
   await expect(page.locator("#toast")).toContainText("已导入 1 个元件");
   await expect(page.locator("#toast")).not.toContainText("升级到");
   const before = await saved(page);
-  for (const [version, message] of [["1.3.0", "升级工具"], ["2.0.0", "大版本"]]) {
+  for (const [version, message] of [["1.4.0", "升级工具"], ["2.0.0", "大版本"]]) {
     await open({ ...patch, version, components: [{ ...item, name: "不应导入" }] });
     await expect(page.locator("#toast")).toContainText(message);
     await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");

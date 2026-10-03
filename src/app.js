@@ -50,6 +50,8 @@ import {
   componentNameBox,
   drawScene,
 } from "./renderer.js";
+import { collisionIssues, firstNewCollision, declarationStatus, analyzeConnections, defaultShell, terminals } from "./design-checks.js";
+
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) =>
@@ -128,6 +130,10 @@ const state = {
   showLabels: true,
   wireMode: "direct",
   wireColor: COLORS[0],
+  wireIgnoreCollision: false,
+  logicalStart: null,
+  showLogic: false,
+  checkHighlight: [],
   draft: null,
   placement: null,
   marquee: null,
@@ -190,6 +196,7 @@ function flushSave() {
   }
 }
 function changed(options) {
+  state.checkHighlight = [];
   save();
   refresh(options);
 }
@@ -197,10 +204,18 @@ function commit(fn, options) {
   if (readOnly) return;
   const before = clone(project);
   fn();
+  const conflict = !options?.allowConflicts && firstNewCollision(before, project);
+  if (conflict) {
+    project = before;
+    toast(conflict.message + "。可为特殊安装勾选忽略碰撞。");
+    refresh();
+    return false;
+  }
   if (JSON.stringify(before) !== JSON.stringify(project)) {
     history.push(before);
     changed(options);
   } else refresh(options);
+  return true;
 }
 function selectedObjects() {
   return project.objects.filter((o) => state.selected.has(o.id));
@@ -211,6 +226,7 @@ function nameNext(prefix) {
   return prefix + n;
 }
 function cancel() {
+  state.logicalStart = null;
   state.draft = null;
   state.placement = null;
   state.marquee = null;
@@ -222,7 +238,11 @@ function setTool(tool) {
   if (readOnly) return;
   state.referenceSelected = false;
   if (state.draft || state.placement) cancel();
+  state.logicalStart = null;
   state.tool = tool;
+  if (tool === "component" || tool === "wire") panel = "properties";
+  if (tool === "logic") state.showLogic = true;
+  state.checkHighlight = [];
   state.selected.clear();
   if ((tool === "wire" || tool === "component") && state.view !== "split")
     state.view = "front";
@@ -230,10 +250,12 @@ function setTool(tool) {
   refresh();
 }
 function setView(view) {
+  const logic = state.tool === "logic", start = state.logicalStart;
   cancel();
   state.view = view;
   state.selected.clear();
-  state.tool = "select";
+  state.tool = logic ? "logic" : "select";
+  state.logicalStart = logic ? start : null;
   fit();
   refresh();
 }
@@ -320,6 +342,8 @@ function refresh({ preserveInspector = false } = {}) {
     project.objects.length > 0 ||
     !!project.reference ||
     state.tool !== "select";
+  const declarations = declarationStatus(project);
+  $("#check-count").textContent = declarations.undeclared.length ? `${declarations.undeclared.length} 待声明` : "";
   $("#wire-count").textContent = project.objects.filter(
     (o) => o.type === "wire",
   ).length;
@@ -346,6 +370,7 @@ function updateHint() {
       state.placement?.mounting === "smd"
         ? "点击相邻焊盘之间放置 · R 旋转 · 右键 / Esc 取消"
         : "点击孔位放置 · R 旋转 · 右键 / Esc 取消",
+    logic: state.logicalStart ? "点击第二个引脚建立逻辑连接 · 可翻面选择 · Esc 取消" : "点击两个元件引脚声明同组 · 不产生实际导线",
     solder: "两面均可画锡线 · Tab 切换拐弯 · Enter 完成 · 右键退出",
     wire:
       state.wireMode === "direct"
@@ -390,6 +415,7 @@ function renderInspector() {
   $$("[data-panel]").forEach((b) =>
     b.classList.toggle("active", b.dataset.panel === panel),
   );
+  if (panel === "checks") { renderChecks(root); return; }
   if (panel === "wires") {
     const wires = project.objects.filter((o) => o.type === "wire");
     root.innerHTML = `<h2 class="section-heading">裁线清单 <small>${wires.length} 根</small></h2><p class="muted">贴板路径 + 两端余量，单位 mm</p>${wires.length ? wires.map((o) => `<button class="wire-row" data-wire-id="${esc(o.id)}"><span class="wire-swatch" style="background:${o.color}"></span><span><strong>${esc(o.name)}</strong><small>${holeName(o.points[0])} → ${holeName(o.points.at(-1))}</small></span><span class="wire-length">${cutLength(o).toFixed(1)}</span></button>`).join("") : `<div class="empty-list">还没有跳线<br>选择左侧「跳线」连接两个孔位</div>`}${wires.length ? `<div class="data-row"><span>总裁线长度</span><strong>${wires.reduce((s, o) => s + cutLength(o), 0).toFixed(1)} mm</strong></div><button class="wide" data-action="csv">导出全部元件清单</button>` : ""}`;
@@ -438,6 +464,15 @@ function renderInspector() {
       state.showLabels = e.target.checked;
       requestDraw();
     };
+    if (state.placement || state.tool === "wire") {
+      const ignored = state.placement?.ignoreCollision ?? state.wireIgnoreCollision;
+      root.insertAdjacentHTML("beforeend", `<label class="check"><input id="placement-ignore" type="checkbox" ${ignored ? "checked" : ""}>${state.placement ? "放置元件" : "新跳线"}忽略碰撞</label><p class="muted">仅豁免物理碰撞，实际连通关系仍参与校验。</p>`);
+      $("#placement-ignore").onchange = (e) => {
+        if (state.placement) state.placement.ignoreCollision = e.target.checked;
+        else state.wireIgnoreCollision = e.target.checked;
+        requestDraw();
+      };
+    }
     bindPalette((color) => {
       state.wireColor = color;
       renderInspector();
@@ -499,6 +534,7 @@ function renderInspector() {
       '<p class="muted">拖动端点或折点调整路径；直角线路的相邻折点会同步调整以保持横竖。</p>',
     );
   }
+  if (o.type === "component" || o.type === "wire") renderDesignProperties(root, o);
   root.insertAdjacentHTML(
     "beforeend",
     '<div class="row-actions"><button data-action="duplicate">复制实例</button><button class="danger" data-action="delete">删除</button></div>',
@@ -548,7 +584,7 @@ function projectDialog(demo = false) {
       );
     }
     storageBlocked = false;
-    commit(() => (project = next));
+    commit(() => (project = next), { allowConflicts: true });
     state.selected.clear();
     state.tool = "select";
     state.view = "front";
@@ -560,7 +596,7 @@ function projectDialog(demo = false) {
 function smdDialog(existing = null) {
   dialog(
     existing ? "编辑贴片元件" : "放置贴片元件",
-    `<div class="field"><label for="smd-kind">元件类型</label><select id="smd-kind"><option value="resistor">贴片电阻</option><option value="capacitor">贴片电容</option></select></div>${field("smd-name", "名称 / 数值", existing?.name ?? nameNext("R"))}<div class="info-box">适用于 0603 / 0805 贴片电阻、电容的布线示意，无需选择封装。放置在焊盘面两个相邻焊盘之间。</div><p class="muted">点击两孔之间落位，按 R 旋转 90°。</p><p class="form-error" id="smd-error"></p>`,
+    `<label class="check"><input id="dialog-ignore-collision" type="checkbox" ${existing?.ignoreCollision ? "checked" : ""}>忽略碰撞</label><div class="field"><label for="smd-kind">元件类型</label><select id="smd-kind"><option value="resistor">贴片电阻</option><option value="capacitor">贴片电容</option></select></div>${field("smd-name", "名称 / 数值", existing?.name ?? nameNext("R"))}<div class="info-box">适用于 0603 / 0805 贴片电阻、电容的布线示意，无需选择封装。放置在焊盘面两个相邻焊盘之间。</div><p class="muted">点击两孔之间落位，按 R 旋转 90°。</p><p class="form-error" id="smd-error"></p>`,
     `<button data-close>取消</button><button id="place-smd" class="primary">${existing ? "保存修改" : "放到焊盘面"}</button>`,
   );
   $("#smd-kind").value = existing?.kind ?? "resistor";
@@ -585,13 +621,14 @@ function smdDialog(existing = null) {
       y: existing?.y ?? 0,
       rotation: existing?.rotation ?? 0,
       pins: clone(existing?.pins ?? unlabeledPins("single", 2)),
+      ignoreCollision: $("#dialog-ignore-collision").checked,
+      ...(existing?.shell ? { shell: clone(existing.shell) } : {}),
       ...(existing?.nameDx !== undefined ? { nameDx: existing.nameDx } : {}),
       ...(existing?.nameDy !== undefined ? { nameDy: existing.nameDy } : {}),
     };
-    if (existing)
-      commit(() => {
-        project.objects[project.objects.findIndex((p) => p.id === o.id)] = o;
-      });
+    if (existing && !commit(() => {
+      project.objects[project.objects.findIndex((p) => p.id === o.id)] = o;
+    })) return;
     closeDialog();
     if (state.view !== "split") state.view = "back";
     state.referenceSelected = false;
@@ -631,6 +668,7 @@ function placeLibraryComponent(item, name) {
   state.referenceSelected = false;
   state.selected.clear();
   state.tool = "component";
+  panel = "properties";
   state.placement = o;
   if (state.view !== "split") state.view = objectFace(o);
   refresh();
@@ -775,7 +813,7 @@ function componentDialog(existing = null) {
   let custom = false;
   dialog(
     existing ? "编辑元件" : "自定义元件",
-    `${field("component-name", "元件名称", existing?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排中心距（孔距）", 1, 1, 20)}${numberField("pin-gap", "两排之间空孔数", 2, 0, 29)}</div><p class="muted" id="pin-gap-help"></p><div id="component-pin-preview"></div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
+    `<label class="check"><input id="dialog-ignore-collision" type="checkbox" ${existing?.ignoreCollision ? "checked" : ""}>忽略碰撞</label>${field("component-name", "元件名称", existing?.name ?? nameNext("U"))}<div class="field-grid"><div class="field"><label for="pin-kind">引脚布局</label><select id="pin-kind"><option value="double">双排引脚</option><option value="single">单排引脚</option><option value="custom">自定义孔位</option></select></div>${numberField("pin-count", "引脚总数", pins.length, 1, 64)}</div><div class="field-grid">${numberField("pin-spacing", "同排中心距（孔距）", 1, 1, 20)}${numberField("pin-gap", "两排之间空孔数", 2, 0, 29)}</div><p class="muted" id="pin-gap-help"></p><div id="component-pin-preview"></div><div id="custom-grid-wrap" hidden><label>点击添加 / 移除引脚（12 × 8 孔）</label><div class="custom-grid" id="custom-grid"></div></div><div class="field"><label for="pin-labels">引脚名称 · 每行一个，按引脚顺序填入</label><textarea id="pin-labels" rows="5" placeholder="VCC\nGND\nTX\nRX"></textarea></div><p class="muted" id="pin-summary"></p><p class="form-error" id="dialog-error"></p>`,
     `${existing ? "" : '<button id="back-components">返回元件</button>'}<button data-close>取消</button><button id="place-component" class="primary">${existing ? "保存修改" : "放到板上"}</button>`,
   );
   const update = () => {
@@ -837,6 +875,7 @@ function componentDialog(existing = null) {
       )
         return;
       syncLabels();
+      const previousPins = pins;
       const labels = pins.map((p) => p.label);
       pins = unlabeledPins(
         $("#pin-kind").value,
@@ -844,7 +883,10 @@ function componentDialog(existing = null) {
         +$("#pin-spacing").value,
         +$("#pin-gap").value + 1,
       );
-      pins.forEach((p, i) => (p.label = labels[i] ?? p.label));
+      pins.forEach((p, i) => {
+        p.label = labels[i] ?? p.label;
+        for (const k of ["id", "net", "nc"]) if (previousPins[i]?.[k] !== undefined) p[k] = previousPins[i][k];
+      });
     }
     $("#dialog-error").textContent = "";
     update();
@@ -886,6 +928,8 @@ function componentDialog(existing = null) {
       y: existing?.y ?? 0,
       rotation: existing?.rotation ?? 0,
       pins: clone(pins),
+      ignoreCollision: $("#dialog-ignore-collision").checked,
+      ...(existing?.shell ? { shell: clone(existing.shell) } : {}),
       ...(existing?.nameDx !== undefined ? { nameDx: existing.nameDx } : {}),
       ...(existing?.nameDy !== undefined ? { nameDy: existing.nameDy } : {}),
     };
@@ -894,11 +938,9 @@ function componentDialog(existing = null) {
         $("#dialog-error").textContent = "修改后的引脚超出板边界，请先移动元件";
         return;
       }
-      commit(
-        () =>
-          (project.objects[project.objects.findIndex((x) => x.id === o.id)] =
-            o),
-      );
+      if (!commit(() => {
+        project.objects[project.objects.findIndex((x) => x.id === o.id)] = o;
+      })) return;
       closeDialog();
       state.selected = new Set([o.id]);
       state.tool = "select";
@@ -1002,7 +1044,7 @@ function helpDialog() {
   dialog(
     "操作指南",
     `<p class="muted">正面是元件面，背面是焊盘面。左右翻板时，同一孔位保持同一编号。</p><div class="shortcut-list">${[
-      ["选择 / 元件 / 锡线 / 跳线", "V / C / S / W"],
+      ["选择 / 元件 / 锡线 / 跳线 / 逻辑连接", "V / C / S / W / L"],
       ["多选 / 框选", "Shift 点击 / 拖动空白"],
       ["移动选中对象", "拖动 / 方向键"],
       ["平移画布", "空格拖动 / 中键拖动"],
@@ -1018,7 +1060,7 @@ function helpDialog() {
       .map(([l, k]) => `<span>${l}</span><kbd>${k}</kbd>`)
       .join(
         "",
-      )}</div><hr class="rule"><p class="muted">线路绑定孔位。单独移动元件时，线路保持原位；一起框选则一起移动。选中线路后可拖动折点；名称和引脚标注可独立拖动，按半格吸附，仅选中元件时显示指示连线。右键取消当前工具并返回选择。重复点击重叠对象可轮换选择。</p><p class="muted">自动保存仅在当前浏览器生效，请定期导出完整项目。工具不做电气连接、短路或占孔校验。</p>`,
+      )}</div><hr class="rule"><p class="muted">线路绑定孔位。单独移动元件时，线路保持原位；一起框选则一起移动。选中线路后可拖动折点；名称和引脚标注可独立拖动，按半格吸附，仅选中元件时显示指示连线。右键取消当前工具并返回选择。重复点击重叠对象可轮换选择。</p><p class="muted">自动保存仅在当前浏览器生效，请定期导出完整项目。校验页检查占孔与外壳冲突；全部引脚声明连接组或 NC 后检查漏接和误短接。忽略碰撞只豁免物理检查，不改变实际连接关系。</p>`,
     '<button class="primary" data-close>开始设计</button>',
   );
 }
@@ -1077,6 +1119,7 @@ function paste() {
   }
   objects.forEach((o) => {
     o.id = uid();
+    if (o.type === "component") o.pins.forEach((p) => { delete p.net; if (p.id) p.id = uid(); });
     o.name =
       o.type === "component" ? o.name : nameNext(o.type === "wire" ? "W" : "T"); // reserve unique line names across the batch
     if (o.type !== "component") {
@@ -1090,7 +1133,7 @@ function paste() {
       o.name = prefix + n;
     }
   });
-  commit(() => project.objects.push(...objects));
+  if (!commit(() => project.objects.push(...objects))) return;
   state.selected = new Set(objects.map((o) => o.id));
   state.tool = "select";
   if (new Set(objects.map((o) => objectFace(o))).size > 1) state.view = "split";
@@ -1254,7 +1297,7 @@ $("#file-input").onchange = async (e) => {
     );
     $("#confirm-import").onclick = () => {
       storageBlocked = false;
-      commit(() => (project = imported));
+      commit(() => (project = imported), { allowConflicts: true });
       state.selected.clear();
       state.tool = "select";
       closeDialog();
@@ -1366,8 +1409,16 @@ function finishDraft() {
       color: state.wireColor,
       allowanceStart: project.defaults.start,
       allowanceEnd: project.defaults.end,
+      ignoreCollision: state.wireIgnoreCollision,
     });
-  commit(() => project.objects.push(o));
+  if (!commit(() => project.objects.push(o))) {
+    if (d.type === "wire" && state.wireMode === "direct") {
+      d.points = d.points.slice(0, 1);
+      d.preview = d.points;
+      requestDraw();
+    }
+    return;
+  }
   state.draft = null;
   state.selected = new Set([o.id]);
   refresh();
@@ -1411,13 +1462,14 @@ canvas.addEventListener("pointerdown", (e) => {
       toast("元件超出板边界，请移动到板内");
       return;
     }
-    commit(() => project.objects.push(o));
+    if (!commit(() => project.objects.push(o))) return;
     state.placement = null;
     state.selected = new Set([o.id]);
     state.tool = "select";
     refresh();
     return;
   }
+  if (state.tool === "logic") { pickLogicalPin(p, v); return; }
   if (state.tool === "solder" || state.tool === "wire") {
     if (state.tool === "wire" && v.face !== "front") {
       toast("请在元件面绘制跳线");
@@ -1638,7 +1690,15 @@ function endGesture() {
         return;
       }
     }
+    const conflict = firstNewCollision(d.before, project);
+    if (conflict) {
+      project = d.before;
+      toast(conflict.message + "，本次移动已取消");
+      refresh();
+      return;
+    }
     history.push(d.before);
+    state.checkHighlight = [];
     save();
   }
   refresh();
@@ -1749,6 +1809,12 @@ document.addEventListener("keydown", (e) => {
   }
   if (["Delete", "Backspace"].includes(e.key)) {
     e.preventDefault();
+    if (state.draft) {
+      if (state.draft.points.length > 1) state.draft.points.pop();
+      state.draft.preview = state.draft.points;
+      requestDraw();
+      return;
+    }
     remove();
     return;
   }
@@ -1773,6 +1839,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "c") setTool("component");
   else if (k === "s") setTool("solder");
   else if (k === "w") setTool("wire");
+  else if (k === "l") setTool("logic");
 });
 document.addEventListener("keyup", (e) => {
   if (e.key === " ") {
@@ -1853,3 +1920,103 @@ new ResizeObserver(() => {
 if (lastSave) $("#save-status").textContent = "已自动保存到本机";
 refresh();
 requestAnimationFrame(fit);
+
+function nextNetName() {
+  const names = new Set(terminals(project).map((t) => t.pin.net));
+  let n = 1;
+  while (names.has(`N${n}`)) n++;
+  return `N${n}`;
+}
+function renderDesignProperties(root, o) {
+  root.insertAdjacentHTML("beforeend", `<hr class="rule"><h2 class="section-heading">物理碰撞</h2><label class="check"><input id="ignore-collision" type="checkbox" ${o.ignoreCollision ? "checked" : ""}>忽略碰撞</label><p class="muted">特殊安装可豁免此对象的物理碰撞；电气连接检查仍然生效。</p>`);
+  $("#ignore-collision").onchange = (e) => commit(() => { o.ignoreCollision = e.target.checked; }, { allowConflicts: true });
+  if (o.type !== "component") return;
+  const shell = o.shell ?? defaultShell(o);
+  root.insertAdjacentHTML("beforeend", `<label class="check"><input id="shell-enabled" type="checkbox" ${o.shell?.enabled ? "checked" : ""}>开启外壳碰撞</label><p class="muted">边界相对元件基准孔，单位为孔距；随元件旋转。仅与同面的已启用外壳比较；焊盘面还检查锡线穿过外壳。</p>${o.shell?.enabled ? `<div class="field-grid">${numberField("shell-x", "外壳左边界", shell.x, -100, 100, 0.05)}${numberField("shell-y", "外壳上边界", shell.y, -100, 100, 0.05)}${numberField("shell-w", "外壳宽度", shell.w, 0.1, 200, 0.05)}${numberField("shell-h", "外壳高度", shell.h, 0.1, 200, 0.05)}</div>` : ""}`);
+  $("#shell-enabled").onchange = (e) => commit(() => { o.shell = { ...shell, enabled: e.target.checked }; }, { allowConflicts: true });
+  for (const key of ["x", "y", "w", "h"])
+    bindNumber(`#shell-${key}`, (n) => commit(() => { o.shell[key] = n; }, { allowConflicts: true }));
+  const names = [...new Set(terminals(project).map((t) => t.pin.net).filter(Boolean))];
+  root.insertAdjacentHTML("beforeend", `<hr class="rule"><h2 class="section-heading">逻辑关系 <small>${o.pins.length} 脚</small></h2><p class="muted">同组必须相连，不同组必须隔离。NC 不得连接其他引脚。全部引脚明确后，校验页自动检查连接。</p><datalist id="net-names">${names.map((name) => `<option value="${esc(name)}"></option>`).join("")}</datalist><div class="intent-list">${o.pins.map((pin, i) => `<div class="intent-row"><label for="pin-intent-${i}">${i + 1} · ${holeName(pinPosition(o, pin))}${pin.label ? ` · ${esc(pin.label)}` : ""}</label><div class="field-grid"><select id="pin-intent-${i}" aria-label="引脚 ${i + 1} 逻辑状态"><option value="unknown" ${!pin.net && !pin.nc ? "selected" : ""}>未声明</option><option value="net" ${pin.net ? "selected" : ""}>连接组</option><option value="nc" ${pin.nc ? "selected" : ""}>NC · 不连接</option></select><input id="pin-net-${i}" aria-label="引脚 ${i + 1} 连接组" maxlength="80" list="net-names" value="${esc(pin.net ?? "")}" placeholder="如 VCC、N1" ${pin.net ? "" : "disabled"}></div></div>`).join("")}</div><button class="wide" data-tool="logic">在画布上声明逻辑连接 · L</button>`);
+  o.pins.forEach((pin, i) => {
+    const select = $(`#pin-intent-${i}`), input = $(`#pin-net-${i}`);
+    select.onchange = () => {
+      const mode = select.value, net = pin.net || nextNetName();
+      commit(() => {
+        pin.id ??= uid();
+        delete pin.net; delete pin.nc;
+        if (mode === "net") pin.net = net;
+        if (mode === "nc") pin.nc = true;
+      }, { preserveInspector: true });
+      input.disabled = mode !== "net";
+      input.value = mode === "net" ? net : "";
+    };
+    input.onchange = () => {
+      const value = input.value.trim();
+      if (!value) { toast("连接组名称不能为空；不再分组时请选择未声明或 NC"); input.value = pin.net ?? ""; return; }
+      commit(() => { pin.net = value; pin.id ??= uid(); delete pin.nc; }, { preserveInspector: true });
+    };
+  });
+}
+function renderChecks(root) {
+  const physical = collisionIssues(project), result = analyzeConnections(project);
+  const entries = [...physical, ...result.errors, ...result.warnings];
+  const ignored = project.objects.filter((o) => o.ignoreCollision);
+  const status = !result.total ? "添加元件并声明引脚逻辑关系后，可检查连通性。"
+    : !result.enabled ? `连通性检查未开启：尚有 ${result.undeclared.length} / ${result.total} 个引脚未声明。`
+      : result.errors.length ? `连通性检查：${result.errors.length} 个错误，${result.warnings.length} 个警告。`
+        : `已声明的连接规则全部通过${result.warnings.length ? `，另有 ${result.warnings.length} 个警告` : ""}。`;
+  root.innerHTML = `<h2 class="section-heading">设计校验</h2><div class="info-box" id="connection-status">${status}</div><p class="muted">${physical.length ? `${physical.length >= 200 ? "至少 " : ""}${physical.length} 个物理冲突` : "物理碰撞检查通过"}。警告不影响连接规则通过；外壳尺寸由你核对。</p><label class="check"><input id="show-logic" type="checkbox" ${state.showLogic ? "checked" : ""}>显示逻辑连接与 NC</label><p class="muted" id="ignored-collision-list">${ignored.length ? `忽略碰撞：${ignored.map((o) => esc(o.name)).join("、")}` : "没有对象忽略碰撞"}。</p>${!result.enabled && result.undeclared.length ? `<h3 class="section-heading">待声明引脚</h3>${result.undeclared.slice(0, 100).map((t, i) => `<button class="check-issue" data-undeclared="${i}">${esc(t.object.name)} · 第 ${t.index + 1} 脚 · ${holeName(t.point)}${t.pin.label ? ` · ${esc(t.pin.label)}` : ""}</button>`).join("")}${result.undeclared.length > 100 ? '<p class="muted">仅列出前 100 个，声明后列表继续更新。</p>' : ""}` : ""}<div id="check-issues">${entries.slice(0, 200).map((entry, i) => `<button class="check-issue ${entry.severity}" data-check-issue="${i}"><strong>${entry.severity === "warning" ? "警告" : "错误"}</strong> ${esc(entry.message)}</button>`).join("")}</div>${entries.length >= 200 ? '<p class="muted">最多显示 200 个问题，请先处理当前列表。</p>' : ""}<p class="muted">点击问题定位对象。逻辑线表示连接意图，不是实际导线，也不进入布线 PNG。</p>`;
+  $("#show-logic").onchange = (e) => { state.showLogic = e.target.checked; requestDraw(); };
+  root.querySelectorAll("[data-check-issue]").forEach((button) => button.onclick = () => focusCheck(entries[+button.dataset.checkIssue]));
+  root.querySelectorAll("[data-undeclared]").forEach((button) => {
+    button.onclick = () => {
+      const t = result.undeclared[+button.dataset.undeclared];
+      focusCheck({ ids: [t.object.id], points: [t.point] });
+      $(`#pin-intent-${t.index}`)?.scrollIntoView({ block: "center" });
+    };
+  });
+}
+function focusCheck(issue) {
+  state.selected = new Set(issue.ids);
+  state.checkHighlight = issue.points;
+  state.referenceSelected = false;
+  state.tool = "select";
+  const objects = selectedObjects(), faces = new Set(objects.map(objectFace));
+  state.view = faces.size > 1 ? "split" : objectFace(objects[0]);
+  panel = "properties";
+  const b = bounds(objects), view = viewsFor(canvas.clientWidth, canvas.clientHeight, state.view)[0];
+  const zoom = clamp(Math.min((view.w - 100) / ((b.maxX - b.minX + 4) * CELL),
+    (view.h - 160) / ((b.maxY - b.minY + 4) * CELL)), 0.15, 3);
+  state.camera = { zoom,
+    panX: ((project.board.cols - 1) / 2 - (b.minX + b.maxX) / 2) * CELL * zoom * (state.view === "back" ? -1 : 1),
+    panY: ((project.board.rows - 1) / 2 - (b.minY + b.maxY) / 2) * CELL * zoom };
+  $("#zoom-label").textContent = Math.round(zoom * 100) + "%";
+  refresh();
+}
+function pickLogicalPin(point, view) {
+  const candidates = terminals(project).filter((t) => objectFace(t.object) === view.face)
+    .map((t) => { const p = toScreen(t.point, project.board, view, state.camera); return { ...t, distance: Math.hypot(p.x - point.x, p.y - point.y) }; })
+    .filter((t) => t.distance < 10).sort((a, b) => a.distance - b.distance);
+  const target = candidates[0];
+  if (!target) { toast("请点击元件引脚，逻辑连接不绑定空焊盘或跳线端点"); return; }
+  if (target.pin.nc) { toast("该引脚已声明 NC，请先在属性中取消 NC"); return; }
+  if (!state.logicalStart) {
+    state.logicalStart = { id: target.object.id, index: target.index };
+    refresh(); return;
+  }
+  const sourceObject = project.objects.find((o) => o.id === state.logicalStart.id);
+  const source = sourceObject?.pins[state.logicalStart.index];
+  if (!source || (sourceObject.id === target.object.id && source === target.pin)) {
+    toast("请选择另一个引脚"); return;
+  }
+  const net = source.net || target.pin.net || nextNetName(), merged = target.pin.net;
+  commit(() => {
+    if (merged && merged !== net)
+      terminals(project).filter((t) => t.pin.net === merged).forEach((t) => { t.pin.net = net; });
+    for (const pin of [source, target.pin]) { pin.id ??= uid(); pin.net = net; delete pin.nc; }
+  });
+  state.logicalStart = null;
+  refresh();
+  toast(`已声明连接组「${net}」，请通过锡线或跳线实现实际连接`);
+}

@@ -85,6 +85,8 @@ export function instantiateLibraryItem(item, name) {
     y: 0,
     rotation: 0,
     pins: clone(item.pins),
+    ...(item.ignoreCollision !== undefined ? { ignoreCollision: item.ignoreCollision } : {}),
+    ...(item.shell !== undefined ? { shell: clone(item.shell) } : {}),
     ...(item.nameDx !== undefined ? { nameDx: item.nameDx } : {}),
     ...(item.nameDy !== undefined ? { nameDy: item.nameDy } : {}),
   };

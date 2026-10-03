@@ -9,6 +9,7 @@ import {
   intersection,
   cutLength,
 } from "./core.js";
+import { shellBounds, terminals } from "./design-checks.js";
 const DARK_COLORS = {
   "#f3f6f7": "#151d24",
   "#314b4f0c": "#00000030",
@@ -295,6 +296,15 @@ export function drawScene(
       ctx.save();
       ctx.globalAlpha = ghost ? 0.2 : preview ? 0.65 : 1;
       const selected = !exporting && state.selected?.has(o.id) && !ghost;
+      const shell = o.type === "component" ? shellBounds(o) : null;
+      if (shell) {
+        const a = to({ x: shell.minX, y: shell.minY }), b = to({ x: shell.maxX, y: shell.maxY });
+        ctx.strokeStyle = o.ignoreCollision ? "#9a8d7b" : "#cc8b32";
+        ctx.lineWidth = 1.3;
+        ctx.setLineDash([7, 3]);
+        ctx.strokeRect(Math.min(a.x, b.x), a.y, Math.abs(b.x - a.x), b.y - a.y);
+        ctx.setLineDash([]);
+      }
       if (o.mounting === "smd") {
         const [a, b] = objectPoints(o).map(to);
         const cx = (a.x + b.x) / 2,
@@ -484,6 +494,11 @@ export function drawScene(
         text(ctx, o.name, b.tx, b.ty,
           selected ? ink("#06796e") : ink("#375f58"), b.fontSize);
       }
+      if (!exporting && !ghost && o.ignoreCollision) {
+        const pos = o.type === "component" ? componentNameBox(ctx, o, board, v, camera)
+          : { tx: to(o.points[0]).x, ty: to(o.points[0]).y };
+        text(ctx, "忽略碰撞", pos.tx, pos.ty - 14, "#b7792d", 9);
+      }
       ctx.restore();
     };
     if (state.showGhost !== false)
@@ -496,6 +511,33 @@ export function drawScene(
         (a, b) => Number(b.type === "solder") - Number(a.type === "solder"),
       ))
       renderObject(o);
+    if (!exporting && !state.readOnly && (state.showLogic || state.tool === "logic")) {
+      const groups = new Map();
+      for (const terminal of terminals(project)) {
+        const p = to(terminal.point);
+        if (terminal.pin.net) {
+          if (!groups.has(terminal.pin.net)) groups.set(terminal.pin.net, []);
+          groups.get(terminal.pin.net).push(p);
+        } else if (terminal.pin.nc) {
+          line(ctx, [{ x: p.x - 5, y: p.y - 5 }, { x: p.x + 5, y: p.y + 5 }], "#9967bd", 1.5);
+          line(ctx, [{ x: p.x - 5, y: p.y + 5 }, { x: p.x + 5, y: p.y - 5 }], "#9967bd", 1.5);
+        }
+      }
+      ctx.setLineDash([4, 5]);
+      for (const [name, points] of groups) {
+        for (const p of points.slice(1)) line(ctx, [points[0], p], "#9967bd", 1.2);
+        text(ctx, name, points[0].x + 7, points[0].y + 9, "#9967bd", 10, "left");
+      }
+      ctx.setLineDash([]);
+      if (state.logicalStart) {
+        const o = project.objects.find((o) => o.id === state.logicalStart.id), pin = o?.pins[state.logicalStart.index];
+        if (pin) { const p = to(pinPosition(o, pin)); circle(ctx, p.x, p.y, 9, null, "#9967bd", 2); }
+      }
+    }
+    if (!exporting && !state.readOnly)
+      for (const point of state.checkHighlight ?? []) {
+        const p = to(point); circle(ctx, p.x, p.y, 10, null, "#dc6654", 2);
+      }
     if (!exporting && state.placement && v.face === objectFace(state.placement))
       renderObject(state.placement, false, true);
     if (

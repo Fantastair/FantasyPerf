@@ -1,4 +1,5 @@
 import demoData from "./demo-project.js";
+import { designAttributes, pinIntent } from "./design-data.js";
 
 export const PITCH = 2.54;
 export const FORMAT = "FantasyPerf";
@@ -6,9 +7,9 @@ export const FORMAT = "FantasyPerf";
 //   大版本：数据含义不兼容的重构，正常情况下保持稳定；
 //   中版本：新增功能带来的向后兼容扩展，旧文件自动升级；
 //   小版本：仅修复，不改变数据含义，同中版本内互相兼容。
-export const FORMAT_VERSION = "1.2.0";
+export const FORMAT_VERSION = "1.3.0";
 // 生成文件的工具版本，与 package.json 保持一致（由单元测试看住）。
-export const APP_VERSION = "1.2.0";
+export const APP_VERSION = "1.3.0";
 export const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 // 早期的整数版本号：1 等同于 1.0.0；2 是引入 meta 的那次改动，等同于 1.1.0。
 const LEGACY_VERSIONS = { 1: "1.0.0", 2: "1.1.0" };
@@ -52,6 +53,8 @@ const FORMAT_MIGRATIONS = {
   },
   // 1.1.0 → 1.2.0：可选名称偏移；缺省时沿用自动位置。
   "1.1.0": { to: "1.2.0", migrate: (data) => ({ ...data }) },
+  // 1.2.0 → 1.3.0: optional collision rules and per-pin connection intent.
+  "1.2.0": { to: "1.3.0", migrate: (data) => ({ ...data }) },
 };
 // 版本号解析：接受三段式字符串，也接受早期的整数版本。
 export function parseVersion(value) {
@@ -421,7 +424,7 @@ export function validateProject(raw) {
         o.pins.length > 256
       )
         fail("元件引脚或位置无效");
-      const coords = new Set();
+      const coords = new Set(), pinIds = new Set();
       v = {
         ...v,
         x: o.x,
@@ -440,7 +443,11 @@ export function validateProject(raw) {
           const k = `${p.x},${p.y}`;
           if (coords.has(k)) fail("元件中存在重复引脚位置");
           coords.add(k);
+          const intent = pinIntent(p);
+          if (intent.id && pinIds.has(intent.id)) fail("元件中存在重复引脚编号");
+          if (intent.id) pinIds.add(intent.id);
           return {
+            ...intent,
             x: p.x,
             y: p.y,
             label: p.label,
@@ -504,6 +511,7 @@ export function validateProject(raw) {
         fail("直角线路不能包含斜线");
       if (lengthMM(v.points) === 0) fail("线路长度不能为零");
     } else fail("未知对象类型");
+    if (o.type === "component" || o.type === "wire") Object.assign(v, designAttributes(o, o.type === "component"));
     if (!fits([v], result.board)) fail("存在超出板边界的对象");
     result.objects.push(v);
   }
