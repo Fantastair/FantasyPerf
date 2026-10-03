@@ -539,3 +539,14 @@ test("只读触摸控制器支持双指缩放且拖动不会触发选中", async
   emit("pointerup", 1, 100, 100);
   assert.equal(calls.pick.length, 1);
 });
+
+test("正面可操作可见贴片，逻辑工具跨面显示端子，隐藏参考及只读保持隔离", async () => {
+  const { editableOnFace } = await import("../src/core.js");
+  const smd = { type: "component", mounting: "smd" }, th = { type: "component" };
+  assert.equal(editableOnFace(smd, "front", { tool: "select", showGhost: true }), true);
+  assert.equal(editableOnFace(smd, "front", { tool: "select", showGhost: false }), false);
+  assert.equal(editableOnFace(smd, "front", { tool: "logic", showGhost: false }), true);
+  assert.equal(editableOnFace(th, "back", { tool: "logic", showGhost: false }), true);
+  assert.equal(editableOnFace(th, "back", { tool: "select", showGhost: true }), false);
+  assert.equal(editableOnFace(smd, "front", { tool: "logic", readOnly: true }), false);
+});

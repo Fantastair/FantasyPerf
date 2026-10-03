@@ -344,3 +344,110 @@ test("实际连接后逻辑线逐段隐藏，删除线路与撤销恢复显示�
   expect((await saved(page)).objects.slice(0, 3).map((o) => o.pins[0].net)).toEqual(["N1", "N1", "N1"]);
   await page.screenshot({ path: testInfo.outputPath("connected-logic-hidden.png") });
 });
+
+test("正面直接声明贴片逻辑连接并移动、旋转，翻面与重载保持同一元件", async ({ page }, testInfo) => {
+  const a = component("A", 3, 3), r = component("R", 8, 4, 2, { mounting: "smd", kind: "resistor" });
+  await load(page, [a, r]);
+  // Logic mode exposes both faces even when ordinary opposite-face reference is hidden.
+  await page.locator("#ghost").uncheck();
+  await page.locator('.tools [data-tool="logic"]').click();
+  await click(page, 3, 3); await click(page, 8, 4);
+  let p = await saved(page);
+  expect(p.objects[0].pins[0].net).toBe("N1"); expect(p.objects[1].pins[0].net).toBe("N1");
+  await expect(page.locator('[data-view="front"]')).toHaveClass("active");
+  await page.locator('.tools [data-tool="select"]').click();
+  await click(page, 16, 10); await page.locator("#ghost").check();
+  await choose(page, 8, 4);
+  await expect(page.locator("#inspector-content")).toContainText("贴片电阻");
+  const from = await point(page, 8, 4), to = await point(page, 10, 6);
+  await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 5 }); await page.mouse.up();
+  await page.locator("#board").focus(); await page.keyboard.press("r");
+  p = await saved(page); expect(p.objects[1]).toMatchObject({ x: 10, y: 6, rotation: 90 });
+  expect(p.objects[1].pins[0].net).toBe("N1");
+  await page.screenshot({ path: testInfo.outputPath("front-smd-edit.png") });
+  await page.locator('[data-view="back"]').click(); await choose(page, 10, 6, "back");
+  await expect(page.locator("#inspector-content")).toContainText("K7 ↔ K8");
+  await page.locator("#board").focus(); await page.keyboard.press("ArrowRight");
+  expect((await saved(page)).objects[1].x).toBe(9); // back-face motion uses mirrored board coordinates
+  await page.keyboard.press("Control+z");
+  expect((await saved(page)).objects[1].x).toBe(10);
+  await page.reload(); await choose(page, 10, 6);
+  await expect(page.locator("#inspector-content")).toContainText("贴片电阻");
+  expect((await saved(page)).objects).toEqual(p.objects);
+});
+
+test("逻辑引脚高亮与点击范围在放大、缩小时一致，空焊盘不显示可选高亮", async ({ page }) => {
+  await load(page, [component("A", 8, 7), component("B", 11, 7)]);
+  for (const steps of [0, 4, -8]) {
+    await fit(page);
+    const a = await point(page, 8, 7), b = await point(page, 11, 7);
+    const box = await page.locator("#board").boundingBox();
+    const fitZoom = Math.max(0.15, Math.min(3, (box.width - 100) / (21 * 28), (box.height - 160) / (16 * 28)));
+    const factor = 1.2 ** steps, center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const scaled = (p) => ({ x: center.x + (p.x - center.x) * factor, y: center.y + (p.y - center.y) * factor });
+    for (let i = 0; i < Math.abs(steps); i++) await page.locator(`[data-action="zoom-${steps > 0 ? "in" : "out"}"]`).click();
+    const { pinHitRadius } = await import("../../src/renderer.js");
+    const radius = pinHitRadius({ zoom: fitZoom * factor }), aa = scaled(a), bb = scaled(b);
+    await page.locator('.tools [data-tool="logic"]').click();
+    // Leave a pixel margin for WebKit's integer mouse-event coordinates at small zoom levels.
+    await page.mouse.move(aa.x + radius * 1.4, aa.y);
+    await expect(page.locator("#hole-position")).toHaveText("—");
+    await page.mouse.click(aa.x + radius * 1.4, aa.y);
+    await expect(page.locator("#toast")).toContainText("请点击元件引脚");
+    await page.mouse.move(aa.x + radius * 0.7, aa.y);
+    await expect(page.locator("#hole-position")).toHaveText("I8");
+    await page.mouse.click(aa.x + radius * 0.7, aa.y);
+    await expect(page.locator("#status-hint")).toContainText("点击第二个引脚");
+    await page.mouse.move(bb.x, bb.y + radius * 0.7);
+    await expect(page.locator("#hole-position")).toHaveText("L8");
+    await page.mouse.click(bb.x, bb.y + radius * 0.7);
+    expect((await saved(page)).objects.map((o) => o.pins[0].net)).toEqual(["N1", "N1"]);
+    await page.locator('[data-action="undo"]').click();
+  }
+});
+
+test("逻辑线连接最近端子，实际连接后仍选取连通部分中最近的端子", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const proto = CanvasRenderingContext2D.prototype, stroke = proto.stroke, clear = proto.clearRect;
+    const move = proto.moveTo, line = proto.lineTo, begin = proto.beginPath;
+    proto.beginPath = function (...args) { this.logicPath = []; return begin.apply(this, args); };
+    proto.moveTo = function (x, y) { this.logicPath?.push({ x, y }); return move.call(this, x, y); };
+    proto.lineTo = function (x, y) { this.logicPath?.push({ x, y }); return line.call(this, x, y); };
+    proto.clearRect = function (...args) { if (this.canvas.id === "board") window.logicPaths = []; return clear.apply(this, args); };
+    proto.stroke = function (...args) {
+      if (this.canvas.id === "board" && this.strokeStyle === "#9967bd" && this.getLineDash().length) window.logicPaths.push(this.logicPath);
+      return stroke.apply(this, args);
+    };
+  });
+  const objects = [component("A", 3, 3), component("B", 9, 3), component("C", 8, 3), component("D", 8, 6)];
+  objects.forEach((o) => { o.pins[0].net = "N1"; });
+  await load(page, objects);
+  await page.locator('[data-panel="checks"]').click(); await page.locator("#show-logic").check();
+  const paths = async () => {
+    const box = await page.locator("#board").boundingBox();
+    const coords = await Promise.all([[3, 3], [9, 3], [8, 3], [8, 6]].map(([x, y]) => point(page, x, y)));
+    return page.evaluate(({ coords, box }) => window.logicPaths.map((path) => path.map((p) =>
+      coords.findIndex((q) => Math.hypot(p.x + box.x - q.x, p.y + box.y - q.y) < 0.1)).sort().join("/")).sort(), { coords, box });
+  };
+  await expect.poll(paths).toEqual(["0/2", "1/2", "2/3"]);
+  await drawSolder(page, [[3, 3], [8, 3]]);
+  await expect.poll(paths).toEqual(["1/2", "2/3"]);
+  await page.screenshot({ path: testInfo.outputPath("nearest-logic.png") });
+});
+
+test("贴片与插件引脚直连焊盘没有悬空警告，移动断开后恢复警告", async ({ page }) => {
+  const a = component("A", 3, 3), b = component("B", 4, 3);
+  const r = component("R", 3, 3, 2, { mounting: "smd", kind: "resistor" });
+  a.pins[0].net = r.pins[0].net = "Left"; b.pins[0].net = r.pins[1].net = "Right";
+  await load(page, [a, b, r]);
+  await page.locator('[data-panel="checks"]').click();
+  await expect(page.locator("#connection-status")).toContainText("全部通过");
+  await expect(page.locator("#check-issues")).toBeEmpty();
+  await page.locator('[data-view="back"]').click(); await choose(page, 3, 3, "back");
+  await page.locator("#board").focus(); await page.keyboard.press("ArrowDown");
+  await page.locator('[data-panel="checks"]').click();
+  await expect(page.locator("#check-issues")).toContainText("漏接");
+  await expect(page.locator("#check-issues")).toContainText("R 第 1 脚没有实际连线");
+  await page.locator('[data-action="undo"]').click();
+  await expect(page.locator("#check-issues")).toBeEmpty();
+});

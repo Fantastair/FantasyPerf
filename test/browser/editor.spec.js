@@ -795,7 +795,7 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   expect(p.objects).toHaveLength(2);
   await page.locator('[data-view="front"]').click();
   await clickHole(page, 6, 6.5);
-  await expect(page.locator("#inspector-content")).toContainText("洞洞板");
+  await expect(page.locator("#inspector-content")).toContainText("贴片电阻");
   await page.locator('[data-view="back"]').click();
   await page.evaluate(
     () =>
