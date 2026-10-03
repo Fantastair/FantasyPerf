@@ -9,7 +9,7 @@ import {
   intersection,
   cutLength,
 } from "./core.js";
-import { shellBounds, terminals } from "./design-checks.js";
+import { shellBounds, terminals, collisionIssues, pendingLogicalConnections } from "./design-checks.js";
 const DARK_COLORS = {
   "#f3f6f7": "#151d24",
   "#314b4f0c": "#00000030",
@@ -132,7 +132,7 @@ export function labelBox(ctx, component, pin, board, view, camera) {
   const pos = toScreen(pinPosition(component, pin), board, view, camera),
     s = CELL * camera.zoom;
   const dx = (pin.labelDx ?? 0) * s * (view.face === "back" ? -1 : 1),
-    dy = (pin.labelDy ?? -0.55) * s;
+    dy = (pin.labelDy ?? 0) * s;
   const align = dx < -0.1 ? "right" : dx > 0.1 ? "left" : "center";
   const fontSize = Math.max(9, Math.min(13, 12 * camera.zoom));
   ctx.font = `${fontSize}px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif`;
@@ -156,7 +156,7 @@ export function componentNameBox(ctx, component, board, view, camera) {
   const origin = { x: (b.minX + b.maxX) / 2, y: b.minY };
   const position = {
     x: origin.x + (component.nameDx ?? 0),
-    y: origin.y + (component.nameDy ?? (component.mounting === "smd" ? -0.58 : -1.25)),
+    y: origin.y + (component.nameDy ?? (b.maxY - b.minY) / 2),
   };
   const point = toScreen(position, board, view, camera);
   const fontSize = Math.max(10, Math.min(13, 12 * camera.zoom));
@@ -202,6 +202,10 @@ export function drawScene(
   const board = project.board,
     views = viewsFor(width, height, state.view, !exporting && state.readOnly),
     camera = state.camera;
+  const diagnostics = !exporting && !state.readOnly;
+  const logicalLinks = diagnostics && (state.showLogic || state.tool === "logic") ? pendingLogicalConnections(project) : [];
+  const physical = diagnostics ? collisionIssues(state.placement
+    ? { ...project, objects: [...project.objects, state.placement] } : project) : [];
   for (const v of views) {
     ctx.save();
     ctx.beginPath();
@@ -491,6 +495,11 @@ export function drawScene(
         const b = componentNameBox(ctx, o, board, v, camera);
         if (selected && o.name)
           line(ctx, [b.pos, { x: b.tx, y: b.ty }], ink("#8fa9a1"), 0.7);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = ink("#f0f6f2");
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.strokeText(o.name, b.tx, b.ty);
         text(ctx, o.name, b.tx, b.ty,
           selected ? ink("#06796e") : ink("#375f58"), b.fontSize);
       }
@@ -512,21 +521,20 @@ export function drawScene(
       ))
       renderObject(o);
     if (!exporting && !state.readOnly && (state.showLogic || state.tool === "logic")) {
-      const groups = new Map();
       for (const terminal of terminals(project)) {
         const p = to(terminal.point);
-        if (terminal.pin.net) {
-          if (!groups.has(terminal.pin.net)) groups.set(terminal.pin.net, []);
-          groups.get(terminal.pin.net).push(p);
-        } else if (terminal.pin.nc) {
+        if (terminal.pin.nc) {
           line(ctx, [{ x: p.x - 5, y: p.y - 5 }, { x: p.x + 5, y: p.y + 5 }], "#9967bd", 1.5);
           line(ctx, [{ x: p.x - 5, y: p.y + 5 }, { x: p.x + 5, y: p.y - 5 }], "#9967bd", 1.5);
         }
       }
       ctx.setLineDash([4, 5]);
-      for (const [name, points] of groups) {
-        for (const p of points.slice(1)) line(ctx, [points[0], p], "#9967bd", 1.2);
-        text(ctx, name, points[0].x + 7, points[0].y + 9, "#9967bd", 10, "left");
+      const named = new Set();
+      for (const link of logicalLinks) {
+        const a = to(link.from), b = to(link.to);
+        line(ctx, [a, b], "#9967bd", 1.2);
+        if (!named.has(link.net)) text(ctx, link.net, a.x + 7, a.y + 9, "#9967bd", 10, "left");
+        named.add(link.net);
       }
       ctx.setLineDash([]);
       if (state.logicalStart) {
@@ -579,6 +587,13 @@ export function drawScene(
         ink("#168e7e55"),
         1,
       );
+    }
+    // Conflict markers remain above objects, placement previews and the cursor.
+    for (const issue of physical) for (const point of issue.points) {
+      const p = to(point);
+      circle(ctx, p.x, p.y, 10, ink("#f0f6f2"), "#dc6654", 1.5);
+      line(ctx, [{ x: p.x - 5, y: p.y - 5 }, { x: p.x + 5, y: p.y + 5 }], "#dc6654", 2);
+      line(ctx, [{ x: p.x - 5, y: p.y + 5 }, { x: p.x + 5, y: p.y - 5 }], "#dc6654", 2);
     }
     ctx.restore();
   }

@@ -78,15 +78,15 @@ test("名称与引脚标注按半格吸附，支持撤销、取消、编辑和�
   await page.locator('[data-pin="0"]').press("Tab");
   const original = (await saved(page)).objects[0];
   // Clicking a label alone must not snap or move it.
-  await clickHole(page, 6.1, 4);
+  await clickHole(page, 7, 4);
   expect((await saved(page)).objects[0]).toEqual(original);
-  await dragBetween(page, await hole(page, 6.1, 4), await hole(page, 5.2, 2.8));
+  await dragBetween(page, await hole(page, 7, 4), await hole(page, 5.6, 2.9));
   const movedPin = (await saved(page)).objects[0];
   expect(movedPin.pins[0]).toMatchObject({ labelDx: -1.5, labelDy: -1 });
   expect(movedPin).toMatchObject({ x: 7, y: 4, rotation: 0 });
   // A name can be grabbed directly even when its component is unselected.
   await clickHole(page, 17, 11);
-  await dragBetween(page, await hole(page, 8.5, 2.75), await hole(page, 10.1, 1.9));
+  await dragBetween(page, await hole(page, 8.5, 5.5), await hole(page, 10.1, 1.9));
   const movedName = (await saved(page)).objects[0];
   expect(movedName).toMatchObject({ x: 7, y: 4, nameDx: 1.5, nameDy: -2 });
   expect(movedName.pins).toEqual(movedPin.pins);
@@ -137,7 +137,7 @@ test("贴片名称在镜像和并排视图中拖动吸附，不改变焊盘", as
   await clickHole(page, 4.5, 4, "back");
   const original = (await saved(page)).objects[0];
   await dragBetween(page,
-    await hole(page, 4.5, 3.42, "back"), await hole(page, 2.8, 2.2, "back"));
+    await hole(page, 4.5, 4, "back"), await hole(page, 2.8, 2.2, "back"));
   const moved = (await saved(page)).objects[0];
   expect(moved).toMatchObject({ x: 4, y: 4, nameDx: -1.5, nameDy: -2 });
   expect(moved.pins).toEqual(original.pins);
@@ -438,7 +438,7 @@ test("元件文件复用、引脚标注拖动、独立移动与保护板尺寸",
   const componentPath = await (await pending).path();
   const start = await hole(page, 7, 4),
     left = await hole(page, 6, 4);
-  await page.mouse.move(start.x - (start.x - left.x) * 0.65, start.y);
+  await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(start.x - 60, start.y - 35, { steps: 6 });
   await page.mouse.up();
@@ -760,8 +760,9 @@ test("贴片电阻电容在焊盘间放置、旋转、复制并完整恢复", as
   p = await saved(page);
   expect(p.objects[0].rotation).toBe(90);
   await expect(page.locator("#inspector-content")).toContainText("E5 ↔ E6");
-  const from = await hole(page, 4, 4.5, "back"),
-    to = await hole(page, 6, 6.5, "back");
+  // The name now occupies the body center; drag the physical object from its pad.
+  const from = await hole(page, 4, 4, "back"),
+    to = await hole(page, 6, 6, "back");
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 5 });
@@ -923,7 +924,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   // 更高的小版本只包含修复，直接打开并归一到当前格式版本。
   const patch = demoProject();
   patch.name = "补丁项目";
-  patch.version = "1.3.9";
+  patch.version = "1.4.9";
   await open("patch.json", patch);
   await expect(page.locator("#modal")).not.toContainText("升级");
   await page.locator("#confirm-import").click();
@@ -934,7 +935,7 @@ test("旧版本项目文件导入时自动升级，不兼容版本被拒绝", as
   const current = await storedOf();
   // 更高的中版本与大版本都被拒绝，当前项目不受影响。
   for (const [file, version, message] of [
-    ["minor.json", "1.4.0", "高于当前工具支持"],
+    ["minor.json", "1.5.0", "高于当前工具支持"],
     ["major.json", "2.0.0", "大版本"],
   ]) {
     const future = demoProject();
@@ -1174,12 +1175,12 @@ test("元件旧文件自动升级，补丁兼容且未来版本不覆盖已导�
     await expect(page.locator("#toast")).toContainText(`升级到 v${COMPONENT_VERSION}`);
     await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");
   }
-  const patch = { ...createComponentFile([item]), version: "1.3.9" };
+  const patch = { ...createComponentFile([item]), version: "1.4.9" };
   await open(patch);
   await expect(page.locator("#toast")).toContainText("已导入 1 个元件");
   await expect(page.locator("#toast")).not.toContainText("升级到");
   const before = await saved(page);
-  for (const [version, message] of [["1.4.0", "升级工具"], ["2.0.0", "大版本"]]) {
+  for (const [version, message] of [["1.5.0", "升级工具"], ["2.0.0", "大版本"]]) {
     await open({ ...patch, version, components: [{ ...item, name: "不应导入" }] });
     await expect(page.locator("#toast")).toContainText(message);
     await expect(page.locator('[data-imported="0"]')).toContainText("旧元件");
