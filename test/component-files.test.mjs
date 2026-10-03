@@ -95,7 +95,7 @@ test("元件格式小版本兼容，高中版本和不同大版本拒绝导入",
     assert.equal(upgradeComponentFile(input).version, COMPONENT_VERSION);
     assert.equal(input.version, version);
   }
-  assert.throws(() => parseComponentFile({ ...file, version: "1.3.0" }), /高于当前工具支持.*升级工具/);
+  assert.throws(() => parseComponentFile({ ...file, version: "1.4.0" }), /高于当前工具支持.*升级工具/);
   for (const version of ["0.9.0", "2.0.0"])
     assert.throws(() => parseComponentFile({ ...file, version }), /大版本/);
 });

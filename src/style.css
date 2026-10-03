@@ -1342,3 +1342,14 @@ dialog::backdrop {
   font-size: 13px;
   color: var(--muted);
 }
+
+.intent-list { display: grid; gap: 12px; margin-bottom: 12px; }
+.intent-row > label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.intent-row .field-grid { margin: 0; gap: 6px; }
+.intent-row input, .intent-row select { width: 100%; min-width: 0; font-size: 12px; }
+.check-issue { display: block; width: 100%; text-align: left; margin: 8px 0; line-height: 1.6; font-size: 12px; }
+.check-issue.error { border-left: 3px solid #dc6654; }
+.check-issue.warning { border-left: 3px solid #cc8b32; }
+.panel-tabs [data-panel="checks"] { padding-left: 10px; padding-right: 10px; }
+#check-count { font-size: 10px; }
+[data-readonly="true"] [data-panel="checks"] { display: none; }

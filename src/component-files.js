@@ -5,7 +5,7 @@ import {
 
 export const COMPONENT_FORMAT = "FantasyPerfComponents";
 // Independent of the project format version; follows the same compatibility rules.
-export const COMPONENT_VERSION = "1.2.0";
+export const COMPONENT_VERSION = "1.3.0";
 const COMPONENT_MIGRATIONS = {
   "1.0.0": {
     to: "1.1.0",
@@ -19,6 +19,7 @@ const COMPONENT_MIGRATIONS = {
     }),
   },
   "1.1.0": { to: "1.2.0", migrate: (data) => ({ ...data }) },
+  "1.2.0": { to: "1.3.0", migrate: (data) => ({ ...data }) },
 };
 
 export function parseComponentVersion(value) {
@@ -69,7 +70,9 @@ export function validateComponent(raw) {
     id: "component-file", type: "component", name: raw.name,
     x: Math.max(0, -Math.min(...raw.pins.map((p) => p?.x))),
     y: Math.max(0, -Math.min(...raw.pins.map((p) => p?.y))),
-    rotation: 0, pins: raw.pins,
+    rotation: 0, pins: raw.pins.map(({ net, id, ...pin }) => pin),
+    ...(raw.ignoreCollision !== undefined ? { ignoreCollision: raw.ignoreCollision } : {}),
+    ...(raw.shell !== undefined ? { shell: raw.shell } : {}),
     ...(raw.nameDx !== undefined ? { nameDx: raw.nameDx } : {}),
     ...(raw.nameDy !== undefined ? { nameDy: raw.nameDy } : {}),
     ...(raw.mounting !== undefined ? { mounting: raw.mounting, kind: raw.kind } : {}),
@@ -77,6 +80,8 @@ export function validateComponent(raw) {
   const component = validateProject(project).objects[0];
   return {
     name: component.name, pins: component.pins,
+    ...(component.ignoreCollision !== undefined ? { ignoreCollision: component.ignoreCollision } : {}),
+    ...(component.shell !== undefined ? { shell: component.shell } : {}),
     ...(component.nameDx !== undefined ? { nameDx: component.nameDx } : {}),
     ...(component.nameDy !== undefined ? { nameDy: component.nameDy } : {}),
     ...(component.mounting ? { mounting: component.mounting, kind: component.kind } : {}),
